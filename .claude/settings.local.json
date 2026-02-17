@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(head:*)",
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(pip install:*)",
+      "Bash(npx vite:*)",
+      "Bash(node:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell:*)",
+      "Bash(curl:*)",
+      "Bash(start chrome:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

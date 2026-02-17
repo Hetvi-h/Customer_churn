@@ -1,0 +1,699 @@
+# Product Requirements Document (PRD)
+## Customer Churn Prediction & Risk Analysis System
+
+**Version:** 1.0  
+**Last Updated:** January 2026  
+**Project Type:** Full-Stack ML Application  
+
+---
+
+## ⚠️ IMPORTANT: Scope Clarification
+
+**This PRD covers ONLY the backend API and frontend interface.**
+
+**NOT included in this implementation:**
+- ❌ ML model training (handled separately by user in Jupyter/Anaconda)
+- ❌ Dataset download (user downloads from Kaggle)
+- ❌ Model file generation (user runs training script separately)
+
+**User will provide manually:**
+- ✅ Dataset: `ml/data/telco_churn.csv` (from Kaggle)
+- ✅ Trained model: `ml/models/churn_model.pkl`
+- ✅ Preprocessing files: `ml/models/scaler.pkl`, `ml/models/label_encoders.pkl`
+- ✅ Metadata: `ml/models/metadata.json`
+
+**Your task:** Build backend and frontend that LOAD and USE these pre-existing files.
+
+---
+
+## 1. Executive Summary
+
+Build a complete web application that serves a trained ML model for predicting customer churn. The system consists of a FastAPI backend that loads a pre-trained XGBoost model and a React frontend dashboard for visualization and interaction.
+
+**Target Audience:** This system is designed as an internal decision-support tool for analysts and retention teams, not as a customer-facing application.
+
+The backend will load model files from the `ml/models/` directory (provided by user) and expose prediction endpoints. The frontend will consume these endpoints and provide an interactive dashboard.
+
+---
+
+## 2. MVP Boundary (Phase 1 vs Phase 2)
+
+To ensure successful delivery and avoid scope creep, this project is divided into two phases:
+
+### ✅ Phase 1 - MVP (Minimum Viable Product)
+
+**Must-have features for initial release:**
+
+**Backend:**
+- Single customer prediction endpoint with risk level
+- Batch CSV upload and processing
+- Risk distribution analytics (high/medium/low counts)
+- Global feature importance from model metadata
+- Prediction history storage and retrieval
+- Basic model performance metrics display
+
+**Frontend:**
+- Dashboard with overview metrics (total customers, risk breakdown, model performance)
+- Risk distribution chart (pie/donut)
+- Feature importance chart (top 10 features)
+- Single prediction form with results display
+- Batch upload page with results table
+- High-risk customers table (top 20)
+- Simple prediction history view
+
+**Performance Goals:**
+- Single prediction: < 500ms response time
+- Batch processing: throughput will be evaluated empirically and optimized for reasonable performance
+- Frontend load: < 3 seconds
+
+### 🚀 Phase 2 - Enhanced Features (Optional)
+
+**Nice-to-have features (build if time permits):**
+
+**Backend:**
+- Per-customer SHAP explanations (computed asynchronously or on-demand to avoid blocking prediction latency)
+- Advanced analytics endpoints (segmentation by multiple dimensions)
+- Prediction confidence intervals
+- Model drift detection
+
+**Frontend:**
+- Confusion matrix visualization
+- Trend analysis over time (churn predictions by week/month)
+- Customer segmentation views (by contract type, internet service, payment method)
+- Interactive SHAP force plots for individual predictions
+- Advanced filtering and search in history
+- Export custom reports
+
+**Note:** Phase 2 features are listed in this PRD for completeness, but Antigravity should prioritize Phase 1 implementation. Phase 2 can be added incrementally after MVP is working.
+
+---
+
+## 3. Project Structure
+
+```
+C:\BULLSHITPROJECTS\Customer Churn Prediction & Risk Analysis System\
+├── ml\
+│   ├── data\
+│   │   └── telco_churn.csv (Kaggle dataset - USER PROVIDED)
+│   ├── models\
+│   │   ├── churn_model.pkl (trained XGBoost - USER PROVIDED)
+│   │   ├── scaler.pkl (StandardScaler - USER PROVIDED)
+│   │   ├── label_encoders.pkl (LabelEncoders - USER PROVIDED)
+│   │   └── metadata.json (feature config - USER PROVIDED)
+│   └── train_model.py (USER RUNS THIS SEPARATELY)
+├── backend\
+│   ├── main.py (FastAPI application)
+│   ├── database.py (SQLite database setup)
+│   ├── models.py (Pydantic models)
+│   ├── requirements.txt
+│   └── .env
+└── frontend\
+    ├── src\
+    │   ├── components\
+    │   ├── services\
+    │   ├── App.jsx
+    │   └── index.js
+    ├── package.json
+    └── public\
+```
+
+---
+
+## 4. Technical Stack
+
+### Backend
+- **Framework:** FastAPI (Python 3.9+)
+- **Database:** SQLite (for storing prediction history)
+- **ML Libraries:** joblib, pandas, numpy, scikit-learn, xgboost, shap
+- **API Documentation:** Auto-generated Swagger/OpenAPI docs
+
+### Frontend
+- **Framework:** React 18+
+- **Styling:** Tailwind CSS
+- **Charts:** Recharts
+- **HTTP Client:** Axios
+- **Icons:** Lucide React
+
+### Data Source
+- **Dataset:** Telco Customer Churn from Kaggle
+- **URL:** https://www.kaggle.com/datasets/blastchar/telco-customer-churn
+
+---
+
+## 5. Backend Requirements
+
+### 5.0 Model Loading (CRITICAL)
+
+**On application startup, the backend MUST:**
+1. Check if `ml/models/` directory exists
+2. Load the following files (provided by user):
+   - `churn_model.pkl` - Pre-trained XGBoost model
+   - `scaler.pkl` - Fitted StandardScaler
+   - `label_encoders.pkl` - Dictionary of fitted LabelEncoders
+   - `metadata.json` - Feature configuration and model metrics
+3. If any file is missing, raise a clear error with instructions
+4. Store loaded objects in memory for fast predictions
+
+**Error Handling for Missing Files:**
+If model files are missing, the API should:
+- Return HTTP 503 (Service Unavailable)
+- Provide error message: "Model files not found. Please train the model first using train_model.py"
+- Log the missing file paths
+
+**Alternative for Development/Testing:**
+If you want to test the backend before the model is trained, you can implement a "mock mode" that returns random predictions. Add an environment variable `USE_MOCK_MODEL=true` to enable this.
+
+### 5.1 API Endpoints
+
+#### **GET /** 
+- Health check endpoint
+- Returns API status and version
+
+#### **POST /predict/single** (MVP - Phase 1)
+- Predict churn for a single customer
+- **Input:** JSON with customer features
+- **Output:** Churn probability, risk level, global feature importance (top 5)
+- **Response Schema:**
+```json
+{
+  "customer_id": "string",
+  "churn_probability": 0.75,
+  "risk_level": "High Risk",
+  "top_risk_factors": [
+    {"feature": "Contract", "importance": 0.234},
+    {"feature": "tenure", "importance": 0.187}
+  ],
+  "prediction_timestamp": "2026-01-17T10:30:00"
+}
+```
+
+#### **POST /explain/{prediction_id}** (Phase 2 - Optional)
+- Get detailed SHAP explanation for a specific prediction
+- Computed asynchronously to avoid blocking
+- Returns SHAP values showing how each feature contributed to THIS specific prediction
+- **Input:** prediction_id from database
+- **Output:** Per-feature SHAP contributions
+
+#### **POST /predict/batch** (MVP - Phase 1)
+- Upload CSV file with multiple customers
+- Process batch predictions
+- **Input:** CSV file (multipart/form-data)
+- **Output:** Array of predictions + downloadable CSV
+- Store results in database
+- Use global feature importance (fast processing)
+
+#### **GET /analytics/risk-distribution** (MVP - Phase 1)
+- Returns count of customers in each risk category
+- **Output:**
+```json
+{
+  "high_risk": 245,
+  "medium_risk": 412,
+  "low_risk": 1543,
+  "total": 2200
+}
+```
+
+#### **GET /analytics/feature-importance** (MVP - Phase 1)
+- Returns global feature importance from model
+- Reads from metadata.json
+- **Output:** Array of {feature, importance} sorted by importance
+
+#### **GET /analytics/model-performance** (MVP - Phase 1)
+- Returns model metrics (ROC-AUC, accuracy, etc.)
+- Reads from metadata.json
+
+#### **GET /history** (MVP - Phase 1)
+- Retrieve recent predictions from database
+- Pagination support (limit, offset)
+- **Query Params:** `limit=50`, `offset=0`
+
+#### **GET /customers/high-risk** (MVP - Phase 1)
+- Get list of customers with churn probability > 0.7
+- Sort by probability descending
+- Include customer details and risk factors
+
+#### **GET /analytics/segmentation** (Phase 2 - Optional)
+- Customer segmentation by contract type, internet service, payment method
+- Returns breakdown of churn rates by segment
+
+#### **GET /analytics/trends** (Phase 2 - Optional)
+- Churn predictions over time (by week/month)
+- Requires timestamp data in database
+
+### 5.2 Data Models (Pydantic)
+
+```python
+class CustomerInput(BaseModel):
+    customerID: Optional[str]
+    gender: str  # Male/Female
+    SeniorCitizen: int  # 0 or 1
+    Partner: str  # Yes/No
+    Dependents: str  # Yes/No
+    tenure: int  # months
+    PhoneService: str  # Yes/No
+    MultipleLines: str  # Yes/No/No phone service
+    InternetService: str  # DSL/Fiber optic/No
+    OnlineSecurity: str  # Yes/No/No internet service
+    OnlineBackup: str  # Yes/No/No internet service
+    DeviceProtection: str  # Yes/No/No internet service
+    TechSupport: str  # Yes/No/No internet service
+    StreamingTV: str  # Yes/No/No internet service
+    StreamingMovies: str  # Yes/No/No internet service
+    Contract: str  # Month-to-month/One year/Two year
+    PaperlessBilling: str  # Yes/No
+    PaymentMethod: str  # Electronic check/Mailed check/Bank transfer/Credit card
+    MonthlyCharges: float
+    TotalCharges: float
+```
+
+### 5.3 Database Schema (SQLite)
+
+**Table: predictions**
+```sql
+CREATE TABLE predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id TEXT,
+    churn_probability REAL,
+    risk_level TEXT,
+    features JSON,
+    prediction_timestamp DATETIME,
+    batch_id TEXT
+);
+```
+
+**Table: batch_uploads**
+```sql
+CREATE TABLE batch_uploads (
+    batch_id TEXT PRIMARY KEY,
+    filename TEXT,
+    total_records INTEGER,
+    high_risk_count INTEGER,
+    upload_timestamp DATETIME
+);
+```
+
+### 5.4 Core Backend Logic
+
+1. **Model Loading (on startup):**
+   - Load churn_model.pkl, scaler.pkl, label_encoders.pkl
+   - Load metadata.json for feature names and importance
+   - Initialize SHAP explainer if available
+
+2. **Preprocessing Pipeline:**
+   - Feature engineering (same as training):
+     - `tenure_group` = bin tenure into categories
+     - `avg_monthly_charge` = TotalCharges / (tenure + 1)
+     - `charge_per_service` = MonthlyCharges / number_of_services
+   - Encode categorical features using saved LabelEncoders
+   - Scale numerical features using saved StandardScaler
+   - Handle missing values (fill with median/mode)
+
+3. **Risk Level Calculation:**
+   - High Risk: probability ≥ 0.7
+   - Medium Risk: 0.4 ≤ probability < 0.7
+   - Low Risk: probability < 0.4
+
+4. **Feature Importance (MVP - Phase 1):**
+   - Use **global feature importance** from model metadata for all predictions
+   - Fast, no computation overhead
+   - Returned from metadata.json
+
+5. **Feature Importance (Enhanced - Phase 2):**
+   - Per-customer SHAP explanations computed **asynchronously or on-demand**
+   - Use SHAP for batch jobs where latency is acceptable
+   - Avoid blocking real-time prediction latency
+   - If SHAP explainer is available, offer a separate endpoint: `POST /explain/{prediction_id}`
+   - This approach maintains performance while offering interpretability when needed
+
+---
+
+## 6. Frontend Requirements
+
+### 6.1 Pages/Views
+
+**Note:** Build Phase 1 (MVP) pages first. Phase 2 pages are optional enhancements.
+
+#### **Dashboard (Home Page)** - MVP Phase 1
+- Overview metrics cards:
+  - Total customers analyzed
+  - High risk count
+  - Medium risk count
+  - Low risk count
+  - Average churn probability
+  - Model ROC-AUC score
+
+- **Risk Distribution Chart** (Pie/Donut chart)
+  - Show percentage breakdown of risk levels
+  - Color coded: Red (high), Yellow (medium), Green (low)
+
+- **Feature Importance Chart** (Horizontal bar chart)
+  - Top 10 most important features (global importance from metadata)
+  - Color gradient based on importance
+
+#### **Single Prediction Page** - MVP Phase 1
+- Form with input fields for all customer features
+- Organized in logical sections:
+  - Demographics (gender, senior citizen, partner, dependents)
+  - Services (phone, internet, streaming, etc.)
+  - Account (contract, billing, payment method)
+  - Charges (monthly, total, tenure)
+
+- **Submit Button** → triggers API call
+- **Results Display:**
+  - Large probability gauge/meter (0-100%)
+  - Risk level badge with color
+  - Top 5 risk factors from global feature importance (bar chart)
+  - "Save to History" button
+
+#### **Batch Upload Page** - MVP Phase 1
+- File upload dropzone (drag & drop CSV)
+- CSV format requirements shown
+- Download sample CSV template button
+
+- **After Upload:**
+  - Processing indicator
+  - Results summary:
+    - Total processed
+    - High/Medium/Low risk breakdown
+  - Download results as CSV
+  - **Risk-sorted table:**
+    - Columns: Customer ID, Churn Prob, Risk Level, Top Risk Factor
+    - Sortable and filterable
+    - Pagination (50 per page)
+
+#### **High Risk Customers Page** - MVP Phase 1
+- Table of top 20 highest risk customers
+- Columns: Customer ID, Probability, Risk Level, Key Features
+- Sortable
+- Export to CSV option
+
+#### **History Page** - MVP Phase 1
+- Table of recent predictions (last 100)
+- Columns: Timestamp, Customer ID, Probability, Risk Level
+- Simple search by customer ID
+- Pagination
+
+---
+
+### Phase 2 Pages (Optional - Build After MVP Works)
+
+#### **Analytics Page** - Phase 2
+- **Model Performance Card:**
+  - ROC-AUC score with explanation
+  - Accuracy, Precision, Recall
+  - Confusion matrix visualization
+
+- **Trend Analysis:**
+  - Line chart of average churn probability by week/month
+  - Requires timestamp data
+
+- **Customer Segmentation:**
+  - Risk level breakdown by:
+    - Contract type
+    - Internet service type
+    - Payment method
+  - Stacked bar charts
+
+#### **SHAP Explanations Page** - Phase 2
+- Select a prediction from history
+- View detailed SHAP force plot
+- See how each feature contributed to THIS specific prediction
+- Waterfall chart of feature contributions
+
+### 6.2 Components to Build (MVP - Phase 1)
+
+**Priority components for Phase 1:**
+1. **MetricCard** - Reusable card for KPIs
+2. **RiskBadge** - Color-coded risk level indicator
+3. **ProbabilityGauge** - Visual meter for churn probability
+4. **FeatureImportanceChart** - Horizontal bar chart (global importance)
+5. **RiskDistributionChart** - Pie/donut chart
+6. **CustomerForm** - Input form for single prediction
+7. **FileUploader** - Drag-drop CSV upload
+8. **ResultsTable** - Paginated, sortable table
+9. **Navbar** - Navigation between pages
+10. **LoadingSpinner** - For async operations
+
+**Phase 2 components (optional):**
+- **SHAPExplanationChart** - Waterfall/force plot for individual predictions
+- **ConfusionMatrix** - Heatmap visualization
+- **TrendChart** - Line chart for time-series data
+- **SegmentationChart** - Stacked bar charts
+
+### 6.3 UI/UX Requirements
+
+- **Color Scheme:**
+  - High Risk: Red (#EF4444)
+  - Medium Risk: Yellow/Orange (#F59E0B)
+  - Low Risk: Green (#10B981)
+  - Primary: Blue (#3B82F6)
+  - Background: Light gray (#F9FAFB)
+
+- **Responsive Design:**
+  - Mobile-first approach
+  - Breakpoints: sm (640px), md (768px), lg (1024px)
+  - Dashboard should work on tablets
+
+- **Loading States:**
+  - Skeleton loaders for charts
+  - Spinners for API calls
+  - Disable buttons during processing
+
+- **Error Handling:**
+  - Toast notifications for errors
+  - Validation on form inputs
+  - Clear error messages
+
+- **Data Visualization Best Practices:**
+  - Tooltips on hover for charts
+  - Legend for multi-series charts
+  - Axis labels and titles
+  - Responsive chart sizing
+
+---
+
+## 7. Integration Requirements
+
+### 7.1 API Integration
+- Base URL: `http://localhost:8000` (development)
+- All requests use Axios
+- Centralized API service file (`services/api.js`)
+- Error interceptor for handling 4xx/5xx responses
+- Loading state management
+
+### 7.2 File Upload
+- Accept only .csv files
+- Max file size: 10MB
+- Validate CSV headers match expected schema
+- Show upload progress bar
+
+### 7.3 Data Export
+- Batch results downloadable as CSV
+- Include all prediction details
+- Filename: `churn_predictions_[timestamp].csv`
+
+---
+
+## 8. Non-Functional Requirements
+
+### 8.1 Performance
+- API response time < 500ms for single prediction (MVP goal)
+- Batch processing: throughput will be evaluated empirically and optimized for reasonable performance (not guaranteed specific rate)
+- Frontend initial load < 3 seconds
+- Charts render smoothly (aim for 60fps, acceptable degradation on lower-end devices)
+
+**Note on batch performance:** Actual throughput depends on:
+- CSV parsing overhead
+- Database write speed (SQLite has limits)
+- Model inference time
+- Server resources
+
+Start with a working implementation, then profile and optimize if needed.
+
+### 8.2 Security
+- Input validation on all API endpoints
+- SQL injection prevention (use parameterized queries)
+- File upload virus scanning (basic)
+- CORS configured for frontend origin only
+
+### 8.3 Scalability
+- SQLite sufficient for demo (up to 100k records)
+- Code structured for easy migration to PostgreSQL
+- API designed to be stateless
+
+### 8.4 Error Handling
+- Try-catch blocks around all ML operations
+- Graceful degradation if model file missing
+- User-friendly error messages (no stack traces to frontend)
+
+---
+
+## 9. Deliverables
+
+### MVP (Phase 1) Deliverables
+**Backend:**
+1. `main.py` - FastAPI application with all Phase 1 endpoints
+2. `database.py` - SQLite setup and models
+3. `requirements.txt` - All Python dependencies
+4. `README_backend.md` - Setup and run instructions
+
+**Frontend:**
+1. Complete React application with all Phase 1 pages
+2. `package.json` with all dependencies
+3. `README_frontend.md` - Setup and run instructions
+
+**Documentation:**
+1. API documentation (auto-generated by FastAPI at `/docs`)
+2. Basic user guide for dashboard
+
+### Phase 2 Deliverables (Optional)
+- SHAP explanation endpoints and UI
+- Advanced analytics pages
+- Trend analysis features
+- Enhanced segmentation views
+
+---
+
+## 10. Success Criteria
+
+### MVP Success Criteria (Must achieve)
+- ✅ Single customer prediction works with correct probability
+- ✅ Batch upload processes CSV and displays results
+- ✅ Dashboard displays risk distribution and global feature importance correctly
+- ✅ Risk levels calculated accurately (High/Medium/Low)
+- ✅ High-risk customers table shows correct data
+- ✅ Prediction history saves and retrieves from database
+- ✅ Responsive design works on desktop and tablet
+- ✅ No critical console errors in browser
+- ✅ API handles edge cases (missing values, invalid inputs)
+- ✅ Application can be demoed end-to-end in < 5 minutes
+
+### Phase 2 Success Criteria (Optional)
+- ✅ Per-customer SHAP explanations display correctly
+- ✅ Trend analysis shows meaningful patterns
+- ✅ Segmentation charts provide business insights
+- ✅ Confusion matrix accurately represents model performance
+
+---
+
+## 11. Future Enhancements (Out of Scope for MVP)
+
+- User authentication and multi-tenancy
+- Real-time predictions via WebSocket
+- A/B testing different models
+- Automated retraining pipeline
+- Email alerts for high-risk customers
+- Integration with CRM systems (Salesforce, HubSpot)
+- Advanced SHAP visualizations (force plots, dependency plots)
+- Model versioning and comparison
+
+---
+
+## 12. Implementation Notes
+
+### Dataset Acquisition (USER RESPONSIBILITY)
+1. Go to: https://www.kaggle.com/datasets/blastchar/telco-customer-churn
+2. Download `WA_Fn-UseC_-Telco-Customer-Churn.csv`
+3. Place in: `ml/data/telco_churn.csv`
+
+### Model Files (USER RESPONSIBILITY)
+User will train the model separately using the provided `train_model.py` script. This generates:
+- `ml/models/churn_model.pkl`
+- `ml/models/scaler.pkl`
+- `ml/models/label_encoders.pkl`
+- `ml/models/metadata.json`
+
+**The backend assumes these files already exist and will fail gracefully if they don't.**
+
+### Dataset Schema (Telco Churn)
+The model expects these exact features:
+- **Categorical:** gender, SeniorCitizen, Partner, Dependents, PhoneService, MultipleLines, InternetService, OnlineSecurity, OnlineBackup, DeviceProtection, TechSupport, StreamingTV, StreamingMovies, Contract, PaperlessBilling, PaymentMethod
+- **Numerical:** tenure, MonthlyCharges, TotalCharges
+- **Engineered:** tenure_group, avg_monthly_charge, charge_per_service
+
+### Model Files Required
+- `churn_model.pkl` - Trained XGBoost classifier
+- `scaler.pkl` - Fitted StandardScaler
+- `label_encoders.pkl` - Dictionary of fitted LabelEncoders
+- `metadata.json` - Feature names, importance, performance metrics
+
+### Example metadata.json structure:
+```json
+{
+  "categorical_cols": ["gender", "Contract", ...],
+  "numerical_cols": ["tenure", "MonthlyCharges", ...],
+  "feature_names": ["gender", "SeniorCitizen", ...],
+  "feature_importance": [
+    {"feature": "Contract", "importance": 0.234},
+    {"feature": "tenure", "importance": 0.187}
+  ],
+  "model_performance": {
+    "roc_auc": 0.8456,
+    "accuracy": 0.8123
+  }
+}
+```
+
+---
+
+## 13. Development Workflow
+
+1. **User trains model** using `train_model.py`
+   - Downloads dataset from Kaggle
+   - Runs training script
+   - Generates .pkl files and metadata.json
+
+2. **Developer builds backend** using this PRD
+   - Implement all API endpoints
+   - Set up database
+   - Test with Postman/curl
+
+3. **Developer builds frontend** using this PRD
+   - Create all pages and components
+   - Integrate with backend API
+   - Test all user flows
+
+4. **Integration testing**
+   - Upload real CSV
+   - Verify predictions match model output
+   - Check all visualizations
+
+5. **Documentation**
+   - Update README files
+   - Add comments to code
+   - Create demo video/screenshots
+
+---
+
+## 14. Industry-Worthy Features (The "Wow" Factor)
+
+### Phase 1 (MVP) - Already Impressive
+1. **Global Feature Importance** - Fast, interpretable predictions
+2. **Real-time Processing** - Batch upload with immediate results
+3. **Professional UI** - Modern, clean dashboard with proper data viz
+4. **Database Persistence** - Predictions saved for historical analysis
+5. **Exportable Reports** - Download results as CSV
+6. **Model Metrics Display** - ROC-AUC, performance transparency
+7. **Risk Segmentation** - Actionable categories (High/Medium/Low)
+8. **Responsive Design** - Works on all devices
+9. **API Documentation** - Auto-generated Swagger docs
+10. **Error Handling** - Graceful failures with user-friendly messages
+
+### Phase 2 (Optional) - Next Level
+11. **SHAP Explanations** - Deep interpretability for individual predictions
+12. **Trend Analysis** - Temporal patterns in churn risk
+13. **Advanced Segmentation** - Multi-dimensional business insights
+14. **Confusion Matrix** - Visual model performance breakdown
+
+**Key Point:** Even with just Phase 1, this project demonstrates:
+- End-to-end ML deployment
+- Production-ready API design
+- Modern full-stack development
+- Business value delivery (risk quantification)
+- Professional software engineering practices
+
+This is resume-worthy at Phase 1. Phase 2 is icing on the cake.
+
+---
+
