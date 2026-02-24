@@ -38,6 +38,11 @@ class Customer(Base):
     num_support_tickets = Column(Integer, default=0)
     days_since_last_interaction = Column(Integer, default=0)
 
+    # Per-customer feature snapshot from uploaded CSV
+    features_json = Column(Text)        # JSON dict of raw feature key-value pairs
+    shap_values_json = Column(Text)     # JSON dict of SHAP values per feature
+    top_risk_factor = Column(String(100))  # Name of feature with highest |SHAP|
+
     # Churn prediction results
     churn_probability = Column(Float)
     churn_risk_level = Column(String(20))

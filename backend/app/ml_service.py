@@ -54,25 +54,25 @@ class ChurnPredictor:
         try:
             # Load model
             if not os.path.exists(CHURN_MODEL_PATH):
-                print(f"❌ Model file not found at: {CHURN_MODEL_PATH}")
+                print(f"[ERROR] Model file not found at: {CHURN_MODEL_PATH}")
                 return False
 
             self.model = joblib.load(CHURN_MODEL_PATH)
-            print(f"✅ Loaded model from: {CHURN_MODEL_PATH}")
+            print(f"[OK] Loaded model from: {CHURN_MODEL_PATH}")
 
             # Load scaler
             if os.path.exists(SCALER_PATH):
                 self.scaler = joblib.load(SCALER_PATH)
-                print(f"✅ Loaded scaler from: {SCALER_PATH}")
+                print(f"[OK] Loaded scaler from: {SCALER_PATH}")
 
             # Load label encoders
             if os.path.exists(LABEL_ENCODERS_PATH):
                 self.label_encoders = joblib.load(LABEL_ENCODERS_PATH)
-                print(f"✅ Loaded label encoders from: {LABEL_ENCODERS_PATH}")
+                print(f"[OK] Loaded label encoders from: {LABEL_ENCODERS_PATH}")
 
             # Load metadata (CRITICAL!)
             if not os.path.exists(METADATA_PATH):
-                print(f"❌ metadata.json not found at: {METADATA_PATH}")
+                print(f"[ERROR] metadata.json not found at: {METADATA_PATH}")
                 return False
                 
             with open(METADATA_PATH, 'r') as f:
@@ -84,7 +84,7 @@ class ChurnPredictor:
             self.numerical_cols = self.metadata.get('numerical_cols', [])
             self.feature_importance = self.metadata.get('feature_importance', {})
             
-            print(f"✅ Loaded metadata:")
+            print(f"[OK] Loaded metadata:")
             print(f"   - Features: {len(self.feature_cols)}")
             print(f"   - Categorical: {len(self.categorical_cols)}")
             print(f"   - Numerical: {len(self.numerical_cols)}")
@@ -95,7 +95,7 @@ class ChurnPredictor:
             return True
 
         except Exception as e:
-            print(f"❌ Error loading models: {e}")
+            print(f"[ERROR] Error loading models: {e}")
             import traceback
             traceback.print_exc()
             self.model_loaded = False
@@ -110,19 +110,19 @@ class ChurnPredictor:
             # Try to load pre-computed SHAP explainer
             if os.path.exists(SHAP_EXPLAINER_PATH):
                 self.shap_explainer = joblib.load(SHAP_EXPLAINER_PATH)
-                print("✅ Loaded pre-computed SHAP explainer")
+                print("[OK] Loaded pre-computed SHAP explainer")
                 self.shap_ready = True
                 return True
 
             # Otherwise create new explainer
             import shap
             self.shap_explainer = shap.TreeExplainer(self.model)
-            print("✅ Initialized SHAP TreeExplainer")
+            print("[OK] Initialized SHAP TreeExplainer")
             self.shap_ready = True
             return True
 
         except Exception as e:
-            print(f"⚠️  Error initializing SHAP: {e}")
+            print(f"[WARN]  Error initializing SHAP: {e}")
             self.shap_ready = False
             return False
 
@@ -151,7 +151,7 @@ class ChurnPredictor:
                     else:
                         # Use most common class or 0
                         df[col] = 0
-                        print(f"⚠️  Unknown value '{value}' for feature '{col}', using default")
+                        print(f"[WARN]  Unknown value '{value}' for feature '{col}', using default")
 
         # Ensure all features exist in correct order (DYNAMIC!)
         feature_df = pd.DataFrame()
@@ -161,9 +161,11 @@ class ChurnPredictor:
             else:
                 # Missing feature - use default value
                 feature_df[feature] = 0
-                print(f"⚠️  Missing feature '{feature}', using default value 0")
+                print(f"[WARN]  Missing feature '{feature}', using default value 0")
 
-        # Convert to numpy array
+        # Convert to numpy array — coerce bad strings (e.g. ' ') to 0
+        for col in feature_df.columns:
+            feature_df[col] = pd.to_numeric(feature_df[col], errors='coerce').fillna(0)
         features_array = feature_df.values.astype(float)
 
         # Apply scaling to numerical columns only (DYNAMIC!)
@@ -208,18 +210,18 @@ class ChurnPredictor:
                     # Map values, fill unknown with 0
                     X[col] = X[col].astype(str).map(mapping).fillna(0)
 
-        # 3. Convert to float (Safe now that strings are encoded)
-        try:
-            X = X.astype(float)
-        except ValueError as e:
-            # Fallback debug printer
-            print("\n--- EXCEPTION DEBUG ---")
-            for col in X.columns:
-                try:
-                    X[col].astype(float)
-                except:
-                    print(f"FAILED COLUMN: {col} values: {X[col].unique()[:5]}")
-            raise e
+        # 3. Convert to float — use pd.to_numeric per column so whitespace
+        #    strings like ' ' (common in Telco TotalCharges) become NaN→0
+        #    instead of crashing astype(float) and silently producing garbage.
+        for col in X.columns:
+            if col not in self.categorical_cols:
+                # Numerical: coerce bad strings to NaN, fill with 0
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+            else:
+                # Already int-encoded above; just coerce to be safe
+                X[col] = pd.to_numeric(X[col], errors='coerce').fillna(0)
+
+        X = X.astype(float)
 
         # 4. Scale Numerical Columns
         if self.scaler is not None and self.numerical_cols:
@@ -302,7 +304,7 @@ class ChurnPredictor:
             }
 
         except Exception as e:
-            print(f"⚠️  SHAP explanation error: {e}")
+            print(f"[WARN]  SHAP explanation error: {e}")
             return {
                 **prediction,
                 "shap_values": {},
@@ -402,7 +404,7 @@ class ChurnPredictor:
                                             key=lambda x: x[1], reverse=True)
                 ]
         except Exception as e:
-            print(f"⚠️  Error getting feature importance: {e}")
+            print(f"[WARN]  Error getting feature importance: {e}")
 
         return []
 

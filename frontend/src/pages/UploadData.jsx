@@ -30,12 +30,8 @@ const UploadData = () => {
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
 
-    // Restore results from context on mount
-    React.useEffect(() => {
-        if (uploadResults && !result) {
-            setResult(uploadResults);
-        }
-    }, [uploadResults, result]);
+    // NOTE: We intentionally do NOT restore previous results on mount.
+    // Navigating to /upload should always show the upload form.
     const [dragActive, setDragActive] = useState(false);
 
     const handleDrag = (e) => {
@@ -172,7 +168,7 @@ const UploadData = () => {
             )}
 
             {/* SECTION 1: Upload Area */}
-            {!hasUploadedData && (
+            {!result && (
                 <div className="mb-8">
                     <h1 className="text-3xl font-bold text-gray-900">Upload Customer Data</h1>
                     <p className="mt-2 text-gray-600">
@@ -182,7 +178,7 @@ const UploadData = () => {
             )}
 
             {/* Info Box - What kind of data is needed */}
-            {!hasUploadedData && (
+            {!result && (
                 <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-5">
                     <div className="flex items-start gap-3 mb-3">
                         <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />

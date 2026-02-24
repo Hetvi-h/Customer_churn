@@ -302,42 +302,68 @@ async def upload_csv_for_predictions(
             buffer.write(contents)
         print(f"File saved to {file_path}")
         
-        if not is_duplicate:
-            # ONLY Retrain if NEW
-            print("New dataset detected. Retraining model...")
-            train_script = "ml/train_model.py"
-            try:
-                # Capture output
-                result = subprocess.run(
-                    [sys.executable, train_script, file_path],
-                    cwd=BASE_DIR,
-                    capture_output=True,
-                    text=True,
-                    check=True
-                )
-                print(" Model retraining complete.")
-                print(result.stdout)
-                
-            except subprocess.CalledProcessError as e:
-                print(f" Model training failed with exit code {e.returncode}")
-                print(f"STDOUT:\n{e.stdout}")
-                print(f"STDERR:\n{e.stderr}")
-                raise HTTPException(status_code=500, detail=f"Model training failed: {e.stderr}")
-        
+        # Always retrain — dedup is tracked for history only, but we always
+        # want to use the latest model hyperparameters.
+        if is_duplicate:
+            print(f"Note: Duplicate file detected (same as previous upload), but retraining anyway to apply latest model settings.")
         else:
-            print("Using existing model from previous upload (Deduplication)")
+            print("New dataset detected. Retraining model...")
+        
+        train_script = "ml/train_model.py"
+        try:
+            import copy
+            env = copy.copy(os.environ)
+            env["PYTHONIOENCODING"] = "utf-8"  # Fix Windows cp1252 charmap crash
+            result = subprocess.run(
+                [sys.executable, train_script, file_path],
+                cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=True
+            )
+            print("Model retraining complete.")
+            print(result.stdout)
+            
+        except subprocess.CalledProcessError as e:
+            print(f"[ERROR] Model training failed with exit code {e.returncode}")
+            print(f"STDOUT:\n{e.stdout}")
+            print(f"STDERR:\n{e.stderr}")
+            raise HTTPException(status_code=500, detail=f"Model training failed: {e.stderr}")
             
         # 3. Reload Model & Metadata
         print("Reloading model...")
         if not predictor.load_models():
              raise HTTPException(status_code=500, detail="Failed to load retrained model")
+        
+        # 3.1 Initialize SHAP explainer for the new model
+        print("Initializing SHAP explainer...")
+        predictor.initialize_shap()
              
         # 4. Process Predictions using NEW Model
-        # Read the file again into DataFrame
+        # Read the file again into DataFrame (multi-sheet Excel support)
         if filename.endswith('.csv'):
             df = pd.read_csv(file_path)
         else:
-            df = pd.read_excel(file_path)
+            # Multi-sheet: skip metadata sheets, use first valid data sheet
+            xls = pd.ExcelFile(file_path)
+            metadata_keywords = {'Data', 'Variable', 'Description', 'Discerption',
+                                 'Column_name', 'Column_type', 'Data_type', 'Type', 'Format'}
+            df = None
+            for sheet_name in xls.sheet_names:
+                temp_df = pd.read_excel(xls, sheet_name=sheet_name)
+                temp_df.columns = temp_df.columns.str.strip()
+                if set(temp_df.columns).intersection(metadata_keywords):
+                    continue
+                if len(temp_df) < 10:
+                    continue
+                df = temp_df
+                print(f"Re-reading sheet '{sheet_name}' for predictions ({len(df)} rows)")
+                break
+            if df is None:
+                raise ValueError("No valid data sheet found in Excel file for predictions.")
             
         # Standardize column names
         df.columns = df.columns.str.strip()
@@ -383,9 +409,9 @@ async def upload_csv_for_predictions(
         
         print(f"Column Mapping: {len(mapped_cols)} case-mismatched columns mapped.")
         if missing_cols:
-            print(f"⚠️ MISSING FEATURES ({len(missing_cols)}): {missing_cols}")
+            print(f"[WARN] MISSING FEATURES ({len(missing_cols)}): {missing_cols}")
         else:
-            print("✅ All features found in uploaded file.")
+            print("[OK] All features found in uploaded file.")
 
         # Extract IDs and Actual Churn
         customer_ids = df[customer_id_col].astype(str).tolist() if customer_id_col in df.columns else [f"ROW-{i+1}" for i in range(len(df))]
@@ -409,41 +435,84 @@ async def upload_csv_for_predictions(
         medium_risk = sum(1 for r in risk_levels if r == "medium")
         low_risk = sum(1 for r in risk_levels if r == "low")
 
-        # Database Update
-        print("Updating database...")
-        existing_customers_query = db.query(Customer).filter(
-            Customer.customer_id.in_(customer_ids)
-        ).all()
-        existing_customers = {c.customer_id: c for c in existing_customers_query}
-        existing_ids = set(existing_customers.keys())
-        
-        update_records = []
+        # ── Compute per-customer SHAP values (single vectorised call) ──────────
+        shap_per_row = [None] * len(customer_ids)  # fallback: no SHAP
+        try:
+            # Multi-check initialization
+            if not predictor.shap_ready or predictor.shap_explainer is None:
+                print("[INFO] SHAP explainer not ready — attempting one-time initialization...")
+                predictor.initialize_shap()
+
+            if predictor.shap_ready and predictor.shap_explainer is not None:
+                print(f"Computing SHAP for {len(X_array)} rows...")
+                raw_shap = predictor.shap_explainer.shap_values(X_array)
+                
+                # Robust class selection for different SHAP versions/models
+                if isinstance(raw_shap, list):
+                    # List of arrays (one per class)
+                    shap_matrix = raw_shap[1] if len(raw_shap) > 1 else raw_shap[0]
+                elif isinstance(raw_shap, np.ndarray) and len(raw_shap.shape) == 3:
+                    # 3D array (samples, features, classes)
+                    shap_matrix = raw_shap[:, :, 1] if raw_shap.shape[2] > 1 else raw_shap[:, :, 0]
+                else:
+                    # 2D array (samples, features)
+                    shap_matrix = raw_shap
+
+                feat_names = predictor.metadata.get('feature_cols', [])
+                for i in range(len(customer_ids)):
+                    if i < len(shap_matrix):
+                        shap_per_row[i] = {
+                            fn: float(sv)
+                            for fn, sv in zip(feat_names, shap_matrix[i])
+                        }
+                print(f"[OK] SHAP values computed and mapped for {len(shap_matrix)} customers.")
+            else:
+                print("[WARN] SHAP explainer still NULL after init — SHAP will be missing.")
+        except Exception as shap_err:
+            print(f"[ERROR] SHAP calculation failed: {str(shap_err)}")
+            import traceback
+            traceback.print_exc()
+
+        # ── Build insert records ─────────────────────────────────────────────
+        print("Clearing old customers from DB...")
+        db.query(Customer).delete()
+        db.commit()
+        print(f"Inserting {len(customer_ids)} new customers...")
         insert_records = []
-        
+
         for idx, (cust_id, prob, risk, churn) in enumerate(zip(customer_ids, probabilities, risk_levels, actual_churn)):
+            # Raw features for this row
+            row_features = df_features.iloc[idx].to_dict()
+            # Convert numpy types to native Python for JSON serialisation
+            row_features = {
+                k: (float(v) if isinstance(v, (np.floating, np.integer)) else str(v))
+                for k, v in row_features.items()
+            }
+
+            shap_dict = shap_per_row[idx]
+            top_factor = None
+            if shap_dict:
+                top_factor = max(shap_dict, key=lambda f: abs(shap_dict[f]))
+
             record = {
                 "customer_id": cust_id,
-                "name": f"Customer {cust_id}", 
+                "name": f"Customer {cust_id}",
                 "churn_probability": float(prob),
                 "churn_risk_level": risk,
                 "last_prediction_date": datetime.utcnow(),
+                "features_json": json.dumps(row_features),
+                "shap_values_json": json.dumps(shap_dict) if shap_dict else None,
+                "top_risk_factor": top_factor,
             }
-            
+
             if churn is not None:
                 record["is_churned"] = bool(churn)
-                
-            if cust_id in existing_ids:
-                record["id"] = existing_customers[cust_id].id
-                update_records.append(record)
             else:
-                if churn is None:
-                    record["is_churned"] = False
-                insert_records.append(record)
+                record["is_churned"] = False
+            insert_records.append(record)
         if insert_records:
             db.bulk_insert_mappings(Customer, insert_records)
-        if update_records:
-            db.bulk_update_mappings(Customer, update_records)
-            print(f"   Bulk updated {len(update_records)} existing customers")
+            print(f"   Bulk inserted {len(insert_records)} customers")
         
         db.commit()
         

@@ -44,8 +44,12 @@ export default function CustomerIntelligence() {
     const [riskFilter, setRiskFilter] = useState('all'); // 'all', 'high', 'medium', 'low'
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [customerShap, setCustomerShap] = useState(null);
+    const [customerFeatures, setCustomerFeatures] = useState(null);
     const [loadingCustomers, setLoadingCustomers] = useState(true);
     const [loadingShap, setLoadingShap] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalCustomers, setTotalCustomers] = useState(0);
+    const PAGE_SIZE = 50;
 
     // Tab 2: Churn Predictor state
     const [metadata, setMetadata] = useState(null);
@@ -68,7 +72,12 @@ export default function CustomerIntelligence() {
         }
     }, [activeTab]);
 
-    // Load customers when search or filter changes (Server-side filtering)
+    // Reset to page 1 whenever search or filter changes
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, riskFilter]);
+
+    // Load customers when search, filter, or page changes (Server-side filtering)
     useEffect(() => {
         if (activeTab === 'lookup') {
             const timer = setTimeout(() => {
@@ -76,7 +85,7 @@ export default function CustomerIntelligence() {
             }, 300); // 300ms debounce for search
             return () => clearTimeout(timer);
         }
-    }, [activeTab, searchQuery, riskFilter]);
+    }, [activeTab, searchQuery, riskFilter, currentPage]);
 
     // Derived state for filtered customers is no longer needed if we trust server
     // But we might want to keep it if we do client-side sorting on the page
@@ -85,26 +94,28 @@ export default function CustomerIntelligence() {
         setLoadingCustomers(true);
         try {
             const params = {
-                page: 1,
-                page_size: 50, // Limit to 50 results for the UI
+                page: currentPage,
+                page_size: PAGE_SIZE,
                 search: searchQuery || undefined,
                 risk_level: riskFilter === 'all' ? undefined : riskFilter,
                 sort_by: 'churn_probability',
                 sort_order: 'desc'
             };
 
-            // Use getCustomers (valid method) instead of getAll (invalid)
             const response = await customersApi.getCustomers(params);
 
             // Handle response structure { customers: [], total: ... }
             const data = response.data.customers || response.data || [];
+            const total = response.data.total ?? data.length;
 
             setCustomers(data);
             setFilteredCustomers(data);
+            setTotalCustomers(total);
         } catch (error) {
             console.error('Error fetching customers:', error);
             setCustomers([]);
             setFilteredCustomers([]);
+            setTotalCustomers(0);
         } finally {
             setLoadingCustomers(false);
         }
@@ -142,17 +153,27 @@ export default function CustomerIntelligence() {
         setSelectedCustomer(customer);
         setLoadingShap(true);
         setCustomerShap(null);
+        setCustomerFeatures(null);
 
         try {
-            // Fetch SHAP values for this customer
-            const response = await customersApi.getById(customer.customer_id);
+            // Fetch full customer detail (includes features_json and shap_values_json)
+            const response = await customersApi.getCustomer(customer.customer_id);
             const data = response.data;
 
-            // Parse SHAP values if they exist
-            if (data.shap_values) {
-                const shapData = typeof data.shap_values === 'string'
-                    ? JSON.parse(data.shap_values)
-                    : data.shap_values;
+            // Store features dict for dynamic stat cards
+            if (data.features_json) {
+                setCustomerFeatures(
+                    typeof data.features_json === 'string'
+                        ? JSON.parse(data.features_json)
+                        : data.features_json
+                );
+            }
+
+            // Store SHAP dict for Key Risk Drivers
+            if (data.shap_values_json) {
+                const shapData = typeof data.shap_values_json === 'string'
+                    ? JSON.parse(data.shap_values_json)
+                    : data.shap_values_json;
                 setCustomerShap(shapData);
             }
         } catch (error) {
@@ -436,6 +457,34 @@ export default function CustomerIntelligence() {
                                 </tbody>
                             </table>
                         </div>
+
+                        {/* Pagination Controls */}
+                        {totalCustomers > PAGE_SIZE && (
+                            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between bg-white">
+                                <span className="text-sm text-gray-600">
+                                    Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, totalCustomers)} of {totalCustomers.toLocaleString()} customers
+                                </span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1 || loadingCustomers}
+                                        className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                        ← Prev
+                                    </button>
+                                    <span className="text-sm font-medium text-gray-900 px-2">
+                                        Page {currentPage} of {Math.ceil(totalCustomers / PAGE_SIZE)}
+                                    </span>
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.min(Math.ceil(totalCustomers / PAGE_SIZE), p + 1))}
+                                        disabled={currentPage >= Math.ceil(totalCustomers / PAGE_SIZE) || loadingCustomers}
+                                        className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                        Next →
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -615,7 +664,13 @@ export default function CustomerIntelligence() {
                 <CustomerReportModal
                     customer={selectedCustomer}
                     shapData={customerShap}
-                    onClose={() => setSelectedCustomer(null)}
+                    customerFeatures={customerFeatures}
+                    uploadMetadata={uploadMetadata}
+                    onClose={() => {
+                        setSelectedCustomer(null);
+                        setCustomerShap(null);
+                        setCustomerFeatures(null);
+                    }}
                 />
             )}
         </div>

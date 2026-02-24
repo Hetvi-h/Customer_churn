@@ -22,8 +22,8 @@
 - `ml/train_model.py`: **Single source of truth** for model training.
 
 ## Known Issues
-- **SHAP Integration**: Pending verification of SHAP explainer loading (disabled for speed during rapid fix).
-- **None**: CSV upload is now fully functional and performant (2.5s for 7000 rows).
+- **None**: SHAP integration is fully functional. Dynamic customer reports now support both Telco and Banking datasets with automated profile filtering.
+- **None**: CSV and Excel upload is fully functional across training and prediction pipelines.
 
 ## How To Run
 1. **Backend**:
@@ -38,6 +38,11 @@
    ```
 
 ## Change Log
+- **2026-02-24**:
+  - Implemented Dual Format Support (CSV & Excel) for model training pipeline, resolving `ParserError`.
+  - Personalized Customer Intelligence: Report Modal now dynamically adapts to dataset features (Telco/Banking).
+  - Added idempotent SQLite migration to `database.py` for seamless schema updates without data loss.
+  - Improved `CustomerReportModal` with intelligent field filtering to hide irrelevant Telco defaults from non-Telco datasets.
 - **2026-02-19**: 
   - Comprehensive project cleanup (deleted debug files, consolidated scripts).
   - Implemented smart deduplication: Uploads are now hashed (MD5) and checked against history. Duplicate uploads skip retraining and reuse existing models, saving time and resources.

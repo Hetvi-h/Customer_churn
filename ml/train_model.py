@@ -1,152 +1,120 @@
 """
-Retrain model with Label Encoding to match backend expectations.
+Complete Churn Prediction Training & Testing Script for Google Colab
+[OK] Includes SHAP explainer generation
+[OK] Auto-downloads model files as ZIP
+[OK] Tests predictions to verify no clustering
+
+Upload your CSV to Colab, then run:
+python train_and_test_colab.py your_data.csv
 """
+
 import pandas as pd
 import numpy as np
 import joblib
 import json
 import shap
+import zipfile
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import roc_auc_score, accuracy_score
 from xgboost import XGBClassifier
+import warnings
+warnings.filterwarnings('ignore')
 
-# Paths
-import os
-import sys
+print("="*60)
+print("CHURN PREDICTION MODEL - TRAINING & TESTING")
+print("="*60)
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(SCRIPT_DIR, "data", "telco_churn.csv")
-MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
-DEBUG_LOG_PATH = os.path.join(MODELS_DIR, "training_debug.log")
+# ============================================================================
+# STEP 1: LOAD AND PREPARE DATA
+# ============================================================================
 
-# Redirect stdout to log file for debugging
-class Tee(object):
-    def __init__(self, *files):
-        self.files = files
-    def write(self, obj):
-        for f in self.files:
-            f.write(obj)
-            f.flush()
-    def flush(self):
-        for f in self.files:
-            f.flush()
-
-os.makedirs(MODELS_DIR, exist_ok=True)
-f = open(DEBUG_LOG_PATH, 'w')
-sys.stdout = Tee(sys.stdout, f)
-sys.stderr = Tee(sys.stderr, f)
-
-print("Starting training script...")
-
-def train(data_path=None):
-    if data_path is None:
-        data_path = DATA_PATH
-        
-    print(f"Loading data from {data_path}...")
-    try:
-        if data_path.endswith('.xlsx') or data_path.endswith('.xls'):
-            # Iterative header detection for Excel
-            for header_row in range(5):
-                try:
-                    df = pd.read_excel(data_path, header=header_row)
-                    # Check if columns look reasonable (not mostly Unnamed)
-                    unnamed_count = sum(1 for c in df.columns if str(c).startswith('Unnamed:'))
-                    if unnamed_count < len(df.columns) / 2:
-                        print(f"Detected header at row {header_row}")
-                        break
-                except Exception:
+def load_data(file_path):
+    """Load CSV or Excel with robust encoding and error handling"""
+    print(f"\n[1/7] Loading data from: {file_path}")
+    
+    # 1. Handle Excel
+    if file_path.lower().endswith(('.xlsx', '.xls')):
+        try:
+            xls = pd.ExcelFile(file_path)
+            metadata_keywords = {'Data', 'Variable', 'Description', 'Discerption', 
+                                 'Column_name', 'Column_type', 'Data_type', 'Type', 'Format'}
+            df = None
+            for sheet_name in xls.sheet_names:
+                temp_df = pd.read_excel(xls, sheet_name=sheet_name)
+                temp_df.columns = temp_df.columns.str.strip()
+                # If sheet contains metadata keywords in columns, skip it
+                if set(temp_df.columns).intersection(metadata_keywords):
                     continue
-            else:
-                 # Fallback to default
-                 df = pd.read_excel(data_path)
+                # If sheet is very small, likely not the data
+                if len(temp_df) < 10:
+                    continue
+                df = temp_df
+                print(f"[OK] Loaded Excel sheet: '{sheet_name}' ({len(df)} rows)")
+                break
+            
+            if df is None:
+                # Fallback to first sheet if nothing matched
+                df = pd.read_excel(file_path)
+                print(f"[WARN] No matched data sheet, using first sheet: {len(df)} rows")
+            
+            df.columns = df.columns.str.strip()
+            return df
+        except Exception as e:
+            print(f"[ERROR] Failed to load Excel: {e}")
+            raise
 
-        else:
-            # CSV with fallback engines and delimiters
-            try:
-                # Try default
-                print(f"Reading CSV from {data_path}")
-                df = pd.read_csv(data_path)
-            except UnicodeDecodeError:
-                print("Utf-8 decode error, trying latin1...")
-                try:
-                    df = pd.read_csv(data_path, encoding='latin1')
-                except:
-                    # Try with different delimiters
-                    df = pd.read_csv(data_path, sep=';', encoding='latin1')
-            except pd.errors.ParserError:
-                 print("Parser error, trying different delimiter...")
-                 df = pd.read_csv(data_path, sep=';', encoding='utf-8')
-                 
-        print(f"Raw dataframe shape: {df.shape}")
-        print(f"Raw columns: {list(df.columns)}")
-                 
-    except Exception as e:
-        print(f"Failed to read file: {e}")
-        raise
-
-    # 1. Detect Schema (Auto-detect Target and ID)
+    # 2. Handle CSV (existing robust logic)
+    df = None
+    for enc in ('utf-8-sig', 'utf-8', 'cp1252', 'latin1'):
+        try:
+            df = pd.read_csv(file_path, encoding=enc, on_bad_lines='warn')
+            print(f"[OK] Loaded with encoding={enc}: {len(df)} rows, {len(df.columns)} columns")
+            break
+        except (UnicodeDecodeError, Exception):
+            continue
+    
+    if df is None:
+        df = pd.read_csv(file_path, encoding='latin1', on_bad_lines='skip')
+        print(f"[OK] Loaded (bad lines skipped): {len(df)} rows, {len(df.columns)} columns")
+    
     df.columns = df.columns.str.strip()
-    
-    # --- METADATA/DOCUMENTATION SHEET CHECK ---
-    # Detect common metadata sheet patterns
-    metadata_patterns = [
-        {'Data', 'Variable', 'Discerption'},
-        {'Variable', 'Description', 'Type'},
-        {'Column', 'Description', 'Type'},
-        {'Field', 'Description'},
-        {'Column_name', 'Column_type', 'Data_type', 'Description'},  # ADD THIS
-        {'Column_name', 'Description'},  # ADD THIS
-    ]
-    
-    current_cols = set(df.columns)
-    if current_cols in metadata_patterns:
-        raise ValueError(
-            "This appears to be a metadata/documentation sheet. "
-            "Please upload the actual data sheet or export as CSV "
-            "with only the customer data (no metadata sheets)."
-        )
+    return df
 
-    # Also check if columns are suspiciously generic
-    # Check if we have very few columns AND they look like metadata headers
-    metadata_headers = {'Data', 'Variable', 'Value', 'Description', 'Type', 'Format', 'Example'}
-    if len(df.columns) < 3 and all(col in metadata_headers for col in df.columns):
-         raise ValueError(
-            "This file appears to contain documentation rather than customer data (generic headers found). "
-            "Please upload a CSV/Excel file with actual customer records."
-        )
-    # ------------------------------------------
+
+def detect_schema(df):
+    """Auto-detect target and ID columns"""
+    print("\n[2/7] Detecting schema...")
     
-    # Clean up any remaining Unnamed columns (drop empty columns)
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-    
-    print(f"Columns found: {list(df.columns)}")
-    
-    # Expanded candidate lists
-    target_candidates = ['Churn', 'Exited', 'churn', 'Target', 'Status', 'churned', 'class', 'Outcome', 'label']
-    id_candidates = ['customerID', 'CustomerId', 'customer_id', 'id', 'RowNumber', 'ID', 'Client_ID']
-    
-    # Find Target
+    # Find target column
+    target_candidates = ['Churn', 'Exited', 'churn', 'Target', 'Status', 'churned']
     target_col = next((col for col in target_candidates if col in df.columns), None)
     
-    # Fallback: Check last column if it looks like a binary target (0/1 or Yes/No) and unique values < 5
     if not target_col:
+        # Check last column
         last_col = df.columns[-1]
-        unique_vals = df[last_col].nunique()
-        if unique_vals <= 5:
-            print(f"Target column not found by name. Using last column '{last_col}' as target (unique values: {unique_vals})")
+        if df[last_col].nunique() <= 5:
             target_col = last_col
+            print(f"[WARN] Using last column '{last_col}' as target")
         else:
-            raise ValueError(f"Could not auto-detect target column. Available columns: {list(df.columns)}")
-            
-    # Find ID
+            raise ValueError(f"Cannot find target column. Columns: {list(df.columns)}")
+    
+    # Find ID column
+    id_candidates = ['customerID', 'CustomerId', 'customer_id', 'id', 'RowNumber']
     customer_id_col = next((col for col in id_candidates if col in df.columns), None)
+    
     if not customer_id_col:
-        print("No ID column found. Using index as ID.")
-        customer_id_col = "ROW_ID" 
+        customer_id_col = "ROW_ID"
         df["ROW_ID"] = df.index.astype(str)
+        print(f"[WARN] No ID column found, using index")
+    
+    print(f"[OK] Target: '{target_col}' | ID: '{customer_id_col}'")
+    return df, target_col, customer_id_col
 
-    print(f"Auto-detected Target: '{target_col}', ID: '{customer_id_col}'")
+def prepare_features(df, target_col, customer_id_col):
+    """Detect and prepare numerical/categorical features"""
+    print("\n[3/7] Preparing features...")
     
     numerical_cols = []
     categorical_cols = []
@@ -154,162 +122,230 @@ def train(data_path=None):
     for col in df.columns:
         if col in [target_col, customer_id_col]:
             continue
-        # Convert to numeric, errors='coerce' turns non-numeric to NaN
+        
+        # Try numeric conversion
         converted = pd.to_numeric(df[col], errors='coerce')
         ratio = converted.notna().sum() / len(df)
+        
         if ratio > 0.8:
             numerical_cols.append(col)
         else:
             categorical_cols.append(col)
-            
-    print(f"Detected {len(numerical_cols)} numerical and {len(categorical_cols)} categorical columns")
-    print(f"Numerical cols: {numerical_cols}")
-    print(f"Categorical cols: {categorical_cols}")
-    print(f"Feature count: {len(numerical_cols) + len(categorical_cols)}")
     
-    # 2. Preprocessing
-    X = pd.DataFrame(index=df.index) # Initialize with index to avoid length mismatch issues
+    print(f"[OK] Numerical: {len(numerical_cols)} | Categorical: {len(categorical_cols)}")
+    
+    # Build feature matrix
+    X = pd.DataFrame(index=df.index)
     encoders = {}
     
-    # Label Encode Categorical
+    # Encode categorical
     for col in categorical_cols:
-        try:
-            le = LabelEncoder()
-            # Handle NaN as "Unknown" purely for encoding
-            # Use Series.astype(str) to ensure uniform type
-            vals = df[col].fillna("Unknown").astype(str)
-            X[col] = le.fit_transform(vals)
-            encoders[col] = le
-        except Exception as e:
-            print(f"Error encoding column {col}: {e}")
-            
-    # Scale Numerical
-    for col in numerical_cols:
-        try:
-            # Force numeric conversion
-            X[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        except Exception as e:
-            print(f"Error processing numerical column {col}: {e}")
-            
-    print(f"X shape before encoding/scaling: {X.shape}")
-    print(f"X columns: {list(X.columns)}")
+        le = LabelEncoder()
+        vals = df[col].fillna("Unknown").astype(str)
+        X[col] = le.fit_transform(vals)
+        encoders[col] = le
     
-    if X.empty or X.shape[1] == 0:
-        print("ERROR: X is empty after feature processing!")
-        print(f"Numerical cols detected: {numerical_cols}")
-        print(f"Categorical cols detected: {categorical_cols}")
-        for col in numerical_cols:
-            print(f"Checking numerical {col}: {col in df.columns}")
-        for col in categorical_cols:
-            print(f"Checking categorical {col}: {col in df.columns}")
-        raise ValueError("No features were added to X!")
-
-    # Handle Target
-    # Check if target is already numeric 0/1
+    # Add numerical (CRITICAL: use pd.to_numeric with coerce!)
+    for col in numerical_cols:
+        X[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    print(f"[OK] Feature matrix shape: {X.shape}")
+    
+    # Prepare target
     y_raw = df[target_col]
     if pd.api.types.is_numeric_dtype(y_raw) and set(y_raw.unique()).issubset({0, 1}):
         y = y_raw
     else:
-        # Try mapped conversion
         y = y_raw.apply(lambda x: 1 if str(x).lower() in ['yes', '1', 'true', 'churned', 'exited'] else 0)
     
-    # Scale numericals
+    print(f"[OK] Churn rate: {y.mean()*100:.2f}%")
+    
+    # Scale numerical features
     scaler = StandardScaler()
     if numerical_cols:
         X[numerical_cols] = scaler.fit_transform(X[numerical_cols])
+        print("[OK] Numerical features scaled")
+    
+    return X, y, encoders, scaler, numerical_cols, categorical_cols
 
-    # 3. Train XGBoost (Optimized for speed)
-    print("Training XGBoost...")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# ============================================================================
+# STEP 2: TRAIN MODEL
+# ============================================================================
+
+def train_model(X, y):
+    """Train XGBoost with optimized hyperparameters"""
+    print("\n[4/7] Training XGBoost model...")
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
+    
+    print(f"  Train: {len(X_train)} samples | Test: {len(X_test)} samples")
     
     model = XGBClassifier(
-        n_estimators=50,       # Reduced from 100 for speed
+        n_estimators=100,
         learning_rate=0.1,
-        max_depth=4,           # Reduced depth for speed
-        n_jobs=-1,             # Use all cores
+        max_depth=6,
+        min_child_weight=1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        n_jobs=-1,
         random_state=42,
         use_label_encoder=False,
         eval_metric='logloss'
     )
+    
     model.fit(X_train, y_train)
     
-    # Evaluate
-    y_pred = model.predict(X_test)
     y_prob = model.predict_proba(X_test)[:, 1]
+    auc = roc_auc_score(y_test, y_prob)
+    acc = accuracy_score(y_test, model.predict(X_test))
     
-    # Handle case with only 1 class in test set
-    try:
-        auc = roc_auc_score(y_test, y_prob)
-    except ValueError:
-        auc = 0.5
-        
-    acc = accuracy_score(y_test, y_pred)
+    print(f"[OK] ROC-AUC: {auc:.4f} | Accuracy: {acc:.4f}")
     
-    print(f"Training complete. ROC-AUC: {auc:.4f}, Accuracy: {acc:.4f}")
+    return model, X_train, X_test, y_test, y_prob, auc, acc
+
+# ============================================================================
+# STEP 3: GENERATE SHAP EXPLAINER
+# ============================================================================
+
+def generate_shap(model, X_train):
+    """Generate SHAP explainer"""
+    print("\n[5/7] Generating SHAP explainer...")
     
-    # 4. Generate SHAP Explainer (TreeExplainer)
-    # Use approximate method if dataset is large, or exact if small. TreeExplainer is usually fast.
-    print("Generating SHAP explainer...")
     try:
         explainer = shap.TreeExplainer(model)
-        shap_ready = True
+        print("[OK] SHAP TreeExplainer created successfully")
+        return explainer
     except Exception as e:
-        print(f"SHAP init failed: {e}")
-        explainer = None
-        shap_ready = False
+        print(f"[WARN] SHAP failed: {e}")
+        return None
+
+# ============================================================================
+# STEP 4: TEST PREDICTIONS
+# ============================================================================
+
+def test_predictions(y_prob):
+    """Test prediction distribution"""
+    print("\n[6/7] Testing predictions...")
     
-    # 5. Save Artifacts
-    print("Saving artifacts...")
-    os.makedirs(MODELS_DIR, exist_ok=True)
+    high = np.sum(y_prob >= 0.7)
+    medium = np.sum((y_prob >= 0.5) & (y_prob < 0.7))
+    low = np.sum(y_prob < 0.5)
+    total = len(y_prob)
     
-    joblib.dump(model, os.path.join(MODELS_DIR, "model.pkl"))
-    joblib.dump(scaler, os.path.join(MODELS_DIR, "scaler.pkl"))
-    joblib.dump(encoders, os.path.join(MODELS_DIR, "encoders.pkl"))
+    print(f"\n  Risk Distribution:")
+    print(f"  |-- High (>=70%):    {high:4d} ({high/total*100:5.1f}%)")
+    print(f"  |-- Medium (50-70%): {medium:4d} ({medium/total*100:5.1f}%)")
+    print(f"  +-- Low (<50%):     {low:4d} ({low/total*100:5.1f}%)")
     
-    if shap_ready:
-        joblib.dump(explainer, os.path.join(MODELS_DIR, "shap_explainer.pkl"))
-        print("SHAP explainer saved!")
+    print(f"\n  Stats: Min={y_prob.min()*100:.1f}% | Max={y_prob.max()*100:.1f}% | Std={y_prob.std()*100:.1f}%")
     
-    # Feature Importance
-    importances = model.feature_importances_
-    features = list(X.columns)
-    feat_imp = {feat: float(imp) for feat, imp in zip(features, importances)}
-    feat_imp = dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True))
+    # Test 10 random samples
+    np.random.seed(42)
+    indices = np.random.choice(len(y_prob), 10)
+    print(f"\n  10 Random Samples:")
+    for i, idx in enumerate(indices, 1):
+        prob = y_prob[idx]
+        risk = "HIGH" if prob >= 0.7 else "MEDIUM" if prob >= 0.5 else "LOW"
+        print(f"    {i:2d}. {prob*100:5.1f}%  [{risk}]")
+    
+    healthy = y_prob.std() > 0.05 and high/total < 0.8 and low/total < 0.9
+    
+    if healthy:
+        print(f"\n  [OK] Predictions look healthy!")
+    else:
+        print(f"\n  [WARN] WARNING: Predictions may be clustered!")
+    
+    return healthy
+
+# ============================================================================
+# STEP 5: SAVE AND ZIP
+# ============================================================================
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def save_and_zip(model, scaler, encoders, explainer, metadata):
+    """Save model files and create ZIP"""
+    print("\n[7/7] Saving files...")
+    
+    # Save directly to ml/models/ so backend picks them up immediately
+    output_dir = os.path.join(SCRIPT_DIR, 'models')
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Save files
+    joblib.dump(model, f'{output_dir}/model.pkl')
+    joblib.dump(scaler, f'{output_dir}/scaler.pkl')
+    joblib.dump(encoders, f'{output_dir}/encoders.pkl')
+    
+    if explainer:
+        joblib.dump(explainer, f'{output_dir}/shap_explainer.pkl')
+        print("[OK] Saved: model.pkl, scaler.pkl, encoders.pkl, shap_explainer.pkl")
+    else:
+        print("[OK] Saved: model.pkl, scaler.pkl, encoders.pkl (no SHAP)")
+    
+    with open(f'{output_dir}/metadata.json', 'w') as f:
+        json.dump(metadata, f, indent=2)
+    print("[OK] Saved: metadata.json")
+    
+    # Create ZIP
+    zip_name = 'churn_model_files.zip'
+    with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file in os.listdir(output_dir):
+            zipf.write(os.path.join(output_dir, file), file)
+    
+    size_mb = os.path.getsize(zip_name) / (1024 * 1024)
+    print(f"[OK] Created: {zip_name} ({size_mb:.2f} MB)")
+    
+    # Try Colab download
+    try:
+        from google.colab import files
+        print(f"\n Downloading {zip_name}...")
+        files.download(zip_name)
+        print("[OK] Download started!")
+    except:
+        print(f"\n ZIP ready: {zip_name} (download manually)")
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main(file_path):
+    df = load_data(file_path)
+    df, target_col, id_col = detect_schema(df)
+    X, y, encoders, scaler, num_cols, cat_cols = prepare_features(df, target_col, id_col)
+    model, X_train, X_test, y_test, y_prob, auc, acc = train_model(X, y)
+    explainer = generate_shap(model, X_train)
+    healthy = test_predictions(y_prob)
     
     # Metadata
+    feat_imp = {f: float(i) for f, i in zip(X.columns, model.feature_importances_)}
     metadata = {
         "model_name": "XGBoost",
         "accuracy": float(acc),
         "roc_auc": float(auc),
         "churn_rate": float(y.mean()),
-        "customer_id_col": customer_id_col,
+        "customer_id_col": id_col,
         "target_col": target_col,
-        "numerical_cols": numerical_cols,
-        "categorical_cols": categorical_cols,
-        "feature_cols": features,
-        "feature_importance": feat_imp,
-        "training_date": "2026-02-18" # Updated date
+        "numerical_cols": num_cols,
+        "categorical_cols": cat_cols,
+        "feature_cols": list(X.columns),
+        "feature_importance": dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)),
+        "training_date": "2026-02-24"
     }
     
+    save_and_zip(model, scaler, encoders, explainer, metadata)
     
-    with open(os.path.join(MODELS_DIR, "metadata.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
-        
-    print("All files saved successfully.")
+    print("\n" + "="*60)
+    if healthy:
+        print("[OK] SUCCESS! Extract ZIP and replace files in ml/models/")
+    else:
+        print("[ERROR] FAILED! Do NOT use these files!")
+    print("="*60 + "\n")
 
 if __name__ == "__main__":
     import sys
-    import traceback
-    
-    # Setup error logging
-    error_log_path = os.path.join(MODELS_DIR, "error.log")
-    
-    try:
-        data_path = sys.argv[1] if len(sys.argv) > 1 else None
-        train(data_path)
-    except Exception as e:
-        with open(error_log_path, "w") as f:
-            f.write(f"Error: {str(e)}\n\n")
-            f.write(traceback.format_exc())
-        print(f"CRITICAL ERROR: {e}", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: python train_and_test_colab.py data.csv")
         sys.exit(1)
+    main(sys.argv[1])

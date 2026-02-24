@@ -135,7 +135,7 @@ export default function ModelMetrics() {
             <Database className="w-6 h-6 text-primary-500 mr-3" />
             <div>
               <p className="text-sm text-gray-500">Training Size</p>
-              <p className="font-medium">{metrics?.training_info?.dataset_size?.toLocaleString() || 'N/A'}</p>
+              <p className="font-medium">{metrics?.dataset_size?.toLocaleString() || 'N/A'}</p>
             </div>
           </div>
         </div>
@@ -179,20 +179,20 @@ export default function ModelMetrics() {
             </div>
           </div>
           <div className="mt-4 flex items-center justify-center gap-6 text-sm text-gray-500">
-            {metrics.training_info?.training_date && (
+            {metrics.training_date && (
               <span className="flex items-center">
                 <Calendar className="w-4 h-4 mr-1" />
-                Trained: {metrics.training_info.training_date}
+                Trained: {metrics.training_date}
               </span>
             )}
-            {metrics.training_info?.churn_rate && (
+            {metrics.churn_rate && (
               <span>
-                Churn Rate in Data: {(metrics.training_info.churn_rate * 100).toFixed(1)}%
+                Churn Rate in Data: {(metrics.churn_rate * 100).toFixed(1)}%
               </span>
             )}
-            {metrics.training_info?.dataset_size && (
+            {metrics.dataset_size && (
               <span>
-                Dataset: {metrics.training_info.dataset_size.toLocaleString()} samples
+                Dataset: {metrics.dataset_size.toLocaleString()} samples
               </span>
             )}
           </div>

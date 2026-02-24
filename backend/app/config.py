@@ -80,8 +80,8 @@ NUMERICAL_FEATURES = [
 
 # Risk thresholds
 RISK_THRESHOLDS = {
-    "high": 0.7,
-    "medium": 0.4,
+    "high": 0.7,    # >= 70% = High
+    "medium": 0.3,  # >= 30% = Medium, < 30% = Low
     "low": 0.0
 }
 

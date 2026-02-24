@@ -60,14 +60,33 @@ class CustomerUpdate(BaseModel):
     is_churned: Optional[bool] = None
 
 
-class CustomerResponse(CustomerBase):
+class CustomerResponse(BaseModel):
     id: int
+    customer_id: str
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    gender: Optional[str] = None
+    senior_citizen: Optional[bool] = None
+    partner: Optional[bool] = None
+    dependents: Optional[bool] = None
+    tenure: Optional[int] = None
+    contract_type: Optional[str] = None
+    payment_method: Optional[str] = None
+    internet_service: Optional[str] = None
+    num_products: Optional[int] = None
+    monthly_charges: Optional[float] = None
+    total_charges: Optional[float] = None
     churn_probability: Optional[float] = None
     churn_risk_level: Optional[str] = None
     last_prediction_date: Optional[datetime] = None
     is_churned: bool = False
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    # Per-customer personalisation data
+    features_json: Optional[Any] = None      # parsed dict or None
+    shap_values_json: Optional[Any] = None   # parsed dict or None
+    top_risk_factor: Optional[str] = None
 
     class Config:
         from_attributes = True

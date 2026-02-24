@@ -69,11 +69,28 @@ def get_customers(
 
 @router.get("/{customer_id}", response_model=CustomerResponse)
 def get_customer(customer_id: str, db: Session = Depends(get_db)):
-    """Get single customer by ID"""
+    """Get single customer by ID — returns features_json and shap_values_json as parsed dicts"""
+    import json as _json
     customer = db.query(Customer).filter(Customer.customer_id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-    return CustomerResponse.model_validate(customer)
+
+    response = CustomerResponse.model_validate(customer)
+
+    # Parse JSON strings → dicts for frontend consumption
+    if customer.features_json:
+        try:
+            response.features_json = _json.loads(customer.features_json)
+        except (ValueError, TypeError):
+            response.features_json = None
+
+    if customer.shap_values_json:
+        try:
+            response.shap_values_json = _json.loads(customer.shap_values_json)
+        except (ValueError, TypeError):
+            response.shap_values_json = None
+
+    return response
 
 
 @router.post("", response_model=CustomerResponse, status_code=201)
