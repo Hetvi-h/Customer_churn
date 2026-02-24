@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, TrendingUp, AlertCircle, Info } from 'lucide-react';
 import { useUpload } from '../contexts/UploadContext';
-import { predictionsApi } from '../services/api';
+import { metadataApi } from '../services/api';
 
 /**
  * Feature Drivers Page
@@ -30,7 +30,7 @@ export default function FeatureDrivers() {
         setError(null);
 
         try {
-            const response = await predictionsApi.getMetadata();
+            const response = await metadataApi.getMetadata();
             const metadata = response.data;
 
             // Extract feature importance from metadata

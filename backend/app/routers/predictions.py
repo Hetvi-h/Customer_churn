@@ -263,27 +263,69 @@ async def upload_csv_for_predictions(
         elif filename.endswith(".xls"):
             ext = ".xls"
             
-        file_path = os.path.abspath(os.path.join(ML_DATA_DIR, f"current_upload{ext}"))
-        os.makedirs(ML_DATA_DIR, exist_ok=True)
+        file_path = os.path.abspath(os.path.join(ML_DATA_DIR, f"current_upload{ext}")) # --- IMPLEMENT SMART DEDUPLICATION ---
         
+        summary_stats = {}  # Initialize early
+        
+        # --- IMPLEMENT SMART DEDUPLICATION ---
+        import hashlib
+        import json
+        
+        # 1. Calculate File Hash
+        contents = await file.read()
+        file_hash = hashlib.md5(contents).hexdigest()
+        
+        # 2. Check History for Duplicate
+        history_file = os.path.join(ML_DATA_DIR, "upload_history.json")
+        is_duplicate = False
+        duplicate_entry = None
+
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, 'r') as f:
+                    history = json.load(f)
+                
+                # Check if this file hash exists
+                for entry in history.get("uploads", []):
+                    if entry.get("file_hash") == file_hash:
+                        is_duplicate = True
+                        duplicate_entry = entry
+                        print(f"Duplicate upload detected: {file.filename} (Hash: {file_hash})")
+                        break
+            except Exception as e:
+                print(f"Warning: Failed to read history for deduplication: {e}")
+
+        # 3. Handle Duplicate vs New Upload
+        # Save file (Always needed for the current prediction session)
+        os.makedirs(ML_DATA_DIR, exist_ok=True)
         with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
+            buffer.write(contents)
         print(f"File saved to {file_path}")
         
-        # 2. Retrain Model
-        print("Retraining model on uploaded data...")
-        train_script = "ml/train_model.py"
+        if not is_duplicate:
+            # ONLY Retrain if NEW
+            print("New dataset detected. Retraining model...")
+            train_script = "ml/train_model.py"
+            try:
+                # Capture output
+                result = subprocess.run(
+                    [sys.executable, train_script, file_path],
+                    cwd=BASE_DIR,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                print(" Model retraining complete.")
+                print(result.stdout)
+                
+            except subprocess.CalledProcessError as e:
+                print(f" Model training failed with exit code {e.returncode}")
+                print(f"STDOUT:\n{e.stdout}")
+                print(f"STDERR:\n{e.stderr}")
+                raise HTTPException(status_code=500, detail=f"Model training failed: {e.stderr}")
         
-        # Run training script in separate process
-        try:
-            subprocess.check_call(
-                [sys.executable, train_script, file_path],
-                cwd=BASE_DIR
-            )
-            print("✅ Model retraining complete.")
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"Model training failed: {str(e)}")
+        else:
+            print("Using existing model from previous upload (Deduplication)")
             
         # 3. Reload Model & Metadata
         print("Reloading model...")
@@ -311,14 +353,39 @@ async def upload_csv_for_predictions(
 
         # Prepare features DataFrame
         df_features = pd.DataFrame()
+        
+        # Create case-insensitive column map
+        col_map = {c.lower(): c for c in df.columns}
+        
+        missing_cols = []
+        mapped_cols = []
+
         for col in feature_cols:
+            # Try to find column (Exact or Case-Insensitive)
+            source_col = col  # Default to exact
             if col in df.columns:
-                if col in numerical_cols:
-                    df_features[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-                else:
-                    df_features[col] = df[col].fillna("Unknown").astype(str)
+                source_col = col
+            elif col.lower() in col_map:
+                source_col = col_map[col.lower()]
+                mapped_cols.append(f"{source_col} -> {col}")
             else:
+                source_col = None
+                missing_cols.append(col)
+
+            if source_col:
+                if col in numerical_cols:
+                    df_features[col] = pd.to_numeric(df[source_col], errors='coerce').fillna(0)
+                else:
+                    df_features[col] = df[source_col].fillna("Unknown").astype(str)
+            else:
+                # Feature completely missing
                 df_features[col] = 0 if col in numerical_cols else "Unknown"
+        
+        print(f"Column Mapping: {len(mapped_cols)} case-mismatched columns mapped.")
+        if missing_cols:
+            print(f"⚠️ MISSING FEATURES ({len(missing_cols)}): {missing_cols}")
+        else:
+            print("✅ All features found in uploaded file.")
 
         # Extract IDs and Actual Churn
         customer_ids = df[customer_id_col].astype(str).tolist() if customer_id_col in df.columns else [f"ROW-{i+1}" for i in range(len(df))]
@@ -424,10 +491,46 @@ async def upload_csv_for_predictions(
             "accuracy": predictor.metadata.get("accuracy", 0),
             "customer_id_col": customer_id_col,
             "target_col": target_col,
-            "columns_in_file": list(df.columns),
-            "features_detected": len(feature_cols),
-            "feature_importance": _extract_feature_importance(predictor.metadata)
+            "feature_importance": predictor.metadata.get("feature_importance", {}),
+            "feature_count": len(feature_cols),
+            "feature_names": feature_cols
         }
+
+        upload_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "filename": file.filename,
+            "file_hash": file_hash,
+            "is_duplicate": is_duplicate,
+            "original_upload": duplicate_entry["timestamp"] if is_duplicate and duplicate_entry else None,
+            "total_customers": len(customer_ids),
+            "total_columns": len(df.columns),
+            "target_column": target_col,
+            "features_detected": len(feature_cols),
+            "high_risk": int(high_risk),
+            "medium_risk": int(medium_risk),
+            "low_risk": int(low_risk),
+            "roc_auc": float(predictor.metadata.get("roc_auc", 0)),
+            "accuracy": float(predictor.metadata.get("accuracy", 0)),
+            "churn_rate": float(summary_stats.get("churn_rate", 0))
+        }
+
+        # Append to history
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, 'r') as f:
+                    history = json.load(f)
+            except json.JSONDecodeError:
+                history = {"uploads": []}
+        else:
+            history = {"uploads": []}
+
+        history["uploads"].append(upload_record)
+
+        # Keep only last 50 uploads
+        history["uploads"] = history["uploads"][-50:]
+
+        with open(history_file, 'w') as f:
+            json.dump(history, f, indent=2)
 
         print(f"Upload complete. Processed {len(customer_ids)} rows.")
         return {

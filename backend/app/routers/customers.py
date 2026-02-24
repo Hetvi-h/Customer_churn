@@ -148,25 +148,37 @@ def mark_customer_churned(customer_id: str, db: Session = Depends(get_db)):
 @router.get("/stats/summary")
 def get_customer_stats(db: Session = Depends(get_db)):
     """Get customer statistics summary"""
-    total = db.query(Customer).count()
-    churned = db.query(Customer).filter(Customer.is_churned == True).count()
+    try:
+        total = db.query(Customer).count()
+        churned = db.query(Customer).filter(Customer.is_churned == True).count()
 
-    risk_distribution = db.query(
-        Customer.churn_risk_level,
-        func.count(Customer.id)
-    ).group_by(Customer.churn_risk_level).all()
+        risk_distribution = db.query(
+            Customer.churn_risk_level,
+            func.count(Customer.id)
+        ).group_by(Customer.churn_risk_level).all()
 
-    risk_dict = {level: count for level, count in risk_distribution if level}
+        risk_dict = {level: count for level, count in risk_distribution if level}
 
-    avg_tenure = db.query(func.avg(Customer.tenure)).scalar() or 0
-    avg_monthly = db.query(func.avg(Customer.monthly_charges)).scalar() or 0
+        avg_tenure = db.query(func.avg(Customer.tenure)).scalar() or 0
+        avg_monthly = db.query(func.avg(Customer.monthly_charges)).scalar() or 0
 
-    return {
-        "total_customers": total,
-        "churned_customers": churned,
-        "active_customers": total - churned,
-        "churn_rate": round(churned / total * 100, 2) if total > 0 else 0,
-        "risk_distribution": risk_dict,
-        "avg_tenure_months": round(avg_tenure, 1),
-        "avg_monthly_charges": round(avg_monthly, 2)
-    }
+        return {
+            "total_customers": total,
+            "churned_customers": churned,
+            "active_customers": total - churned,
+            "churn_rate": round(churned / total * 100, 2) if total > 0 else 0,
+            "risk_distribution": risk_dict,
+            "avg_tenure_months": round(avg_tenure, 1),
+            "avg_monthly_charges": round(avg_monthly, 2)
+        }
+    except Exception as e:
+        print(f"Error in get_customer_stats: {e}")
+        return {
+            "total_customers": 0,
+            "churned_customers": 0,
+            "active_customers": 0,
+            "churn_rate": 0,
+            "risk_distribution": {},
+            "avg_tenure_months": 0,
+            "avg_monthly_charges": 0
+        }

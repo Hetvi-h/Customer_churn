@@ -1,0 +1,72 @@
+{
+  "uploads": [
+    {
+      "timestamp": "2026-02-19T15:18:06.551695",
+      "filename": "gym_churn_us.csv",
+      "file_hash": "fdaac7b5d2dfc52806f7fb3e12128fca",
+      "is_duplicate": false,
+      "original_upload": null,
+      "total_customers": 4000,
+      "total_columns": 14,
+      "target_column": "Churn",
+      "features_detected": 13,
+      "high_risk": 843,
+      "medium_risk": 278,
+      "low_risk": 2879,
+      "roc_auc": 0.9627471108314845,
+      "accuracy": 0.90375,
+      "churn_rate": 26.52
+    },
+    {
+      "timestamp": "2026-02-19T15:58:57.043614",
+      "filename": "E Commerce Dataset.xlsx",
+      "file_hash": "6b6350f7de875d38cad040de3ed66273",
+      "is_duplicate": false,
+      "original_upload": null,
+      "total_customers": 5630,
+      "total_columns": 20,
+      "target_column": "Churn",
+      "features_detected": 19,
+      "high_risk": 371,
+      "medium_risk": 507,
+      "low_risk": 4752,
+      "roc_auc": 0.9343309302926732,
+      "accuracy": 0.9191829484902309,
+      "churn_rate": 16.84
+    },
+    {
+      "timestamp": "2026-02-19T16:15:21.680480",
+      "filename": "Churn_Modelling.csv",
+      "file_hash": "496aee8fbfdfa1dfb6daa9dbca5d1a01",
+      "is_duplicate": false,
+      "original_upload": null,
+      "total_customers": 10000,
+      "total_columns": 14,
+      "target_column": "Exited",
+      "features_detected": 12,
+      "high_risk": 660,
+      "medium_risk": 913,
+      "low_risk": 8427,
+      "roc_auc": 0.8687002316519172,
+      "accuracy": 0.863,
+      "churn_rate": 20.37
+    },
+    {
+      "timestamp": "2026-02-19T16:25:29.300992",
+      "filename": "gym_churn_us.csv",
+      "file_hash": "fdaac7b5d2dfc52806f7fb3e12128fca",
+      "is_duplicate": true,
+      "original_upload": "2026-02-19T15:18:06.551695",
+      "total_customers": 4000,
+      "total_columns": 14,
+      "target_column": "Exited",
+      "features_detected": 12,
+      "high_risk": 0,
+      "medium_risk": 1,
+      "low_risk": 3999,
+      "roc_auc": 0.8687002316519172,
+      "accuracy": 0.863,
+      "churn_rate": 0.0
+    }
+  ]
+}

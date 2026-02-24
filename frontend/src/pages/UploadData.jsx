@@ -124,21 +124,29 @@ const UploadData = () => {
     const targetCol = summary.target_col || result?.schema_info?.target_col || 'Auto-detected';
     const churnValue = summary.churn_value || 'Yes/1';
 
-    // Feature extraction
-    const featureImportance = summary.feature_importance || result?.feature_importance || [];
+    // Feature extraction - Handle multiple formats robustly
+    const featureImportance = summary.feature_importance || result?.feature_importance || {};
+
+    // Create normalized array of {feature, importance}
+    let topFeatures = [];
+    if (Array.isArray(featureImportance)) {
+        topFeatures = featureImportance;
+    } else {
+        topFeatures = Object.entries(featureImportance)
+            .map(([feature, importance]) => ({ feature, importance }));
+    }
+
+    // Sort by importance (descending) and take top 5
+    topFeatures = topFeatures
+        .sort((a, b) => Math.abs(b.importance) - Math.abs(a.importance))
+        .slice(0, 5);
+
+    // Get all feature names
     const featureCols = Array.isArray(featureImportance)
         ? featureImportance.map(f => f.feature)
         : Object.keys(featureImportance);
 
-    const excludedCols = result?.excluded_cols || [];
-
-    // Get top 5 features
-    const topFeatures = Array.isArray(featureImportance)
-        ? featureImportance.slice(0, 5)
-        : Object.entries(featureImportance || {})
-            .map(([feature, importance]) => ({ feature, importance }))
-            .sort((a, b) => b.importance - a.importance)
-            .slice(0, 5);
+    const excludedCols = result?.excluded_cols || [];  // Restored missing variable
 
     return (
         <div className="max-w-5xl mx-auto">
@@ -400,7 +408,9 @@ const UploadData = () => {
                             </div>
                             <div>
                                 <span className="text-gray-600">• Features Used:</span>
-                                <span className="ml-2 font-medium text-gray-900">{featureCols.length} columns</span>
+                                <span className="ml-2 font-medium text-gray-900">
+                                    {summary.feature_count !== undefined ? summary.feature_count : featureCols.length} columns
+                                </span>
                             </div>
                             <div className="col-span-2">
                                 <span className="text-gray-600">• Excluded:</span>

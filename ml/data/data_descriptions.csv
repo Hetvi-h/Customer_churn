@@ -1,0 +1,3 @@
+Column_name,Description
+Customer_ID,ID of customer
+Churn,Target variable

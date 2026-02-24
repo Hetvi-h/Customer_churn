@@ -55,6 +55,7 @@ export const predictionsApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
+  getMetadata: () => api.get('/metadata'), // Add this to fix the error
 };
 
 // Segments API

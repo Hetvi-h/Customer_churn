@@ -38,4 +38,9 @@
    ```
 
 ## Change Log
+- **2026-02-19**: 
+  - Comprehensive project cleanup (deleted debug files, consolidated scripts).
+  - Implemented smart deduplication: Uploads are now hashed (MD5) and checked against history. Duplicate uploads skip retraining and reuse existing models, saving time and resources.
+  - Enhanced upload history logging to track duplicates and file hashes.
+- **2026-02-18**: Implemented robust metadata sheet detection in `ml/train_model.py`. The system now gracefully rejects Excel documentation sheets and guides users to upload clean data. Confirmed fix with verification script.
 - **2026-02-17**: Consolidated training scripts into `ml/train_model.py`. Switched to Label Encoding to fix backend mismatch. Cleaned up outdated documentation.

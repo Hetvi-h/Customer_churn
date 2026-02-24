@@ -48,3 +48,13 @@ ml/models/*.json
 # Coverage
 .coverage
 htmlcov/
+
+# Generated Upload Results
+upload_result*.json
+ml/upload_history.json
+
+# Current Upload Data
+ml/data/current_upload.*
+
+# Debug Logs
+backend_debug.log
