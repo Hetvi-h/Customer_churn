@@ -11,7 +11,8 @@ import {
     Info,
     Download,
     RefreshCw,
-    FileText
+    FileText,
+    CheckCircle
 } from 'lucide-react';
 import { useUpload } from '../contexts/UploadContext';
 import { customersApi, predictionsApi, metadataApi } from '../services/api';
@@ -188,7 +189,7 @@ export default function CustomerIntelligence() {
         setPredictionResult(null);
 
         try {
-            const response = await predictionsApi.predictSingle(formData);
+            const response = await predictionsApi.predictWithExplanation(formData);
             setPredictionResult(response.data);
         } catch (error) {
             console.error('Error predicting churn:', error);
@@ -526,43 +527,134 @@ export default function CustomerIntelligence() {
                                 </p>
 
                                 <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-                                    {/* Numerical Fields */}
-                                    {metadata.numerical_cols?.map((col) => (
-                                        <div key={col}>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                {col}
-                                            </label>
-                                            <input
-                                                type="number"
-                                                step="any"
-                                                value={formData[col] || 0}
-                                                onChange={(e) => setFormData({ ...formData, [col]: parseFloat(e.target.value) || 0 })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                title={`Enter a numeric value for ${col}`}
-                                            />
-                                        </div>
-                                    ))}
+                                    {[...(metadata.feature_cols || [
+                                        ...(metadata.numerical_cols || []),
+                                        ...(metadata.categorical_cols || []),
+                                    ])].map((col) => {
+                                        // ── Human-readable label ───────────────────────────────────
+                                        const LABEL_MAP = {
+                                            Near_Location: 'Near Location',
+                                            Contract_period: 'Contract Period',
+                                            Avg_additional_charges_total: 'Avg Additional Charges ($)',
+                                            Avg_class_frequency_total: 'Avg Class Frequency (Total)',
+                                            Avg_class_frequency_current_month: 'Avg Class Frequency (This Month)',
+                                            Month_to_end_contract: 'Months to Contract End',
+                                            Promo_friends: 'Referred by Friend',
+                                            Group_visits: 'Group Visits',
+                                            Age: 'Age (years)',
+                                            Lifetime: 'Membership Lifetime (months)',
+                                            tenure: 'Tenure (months)',
+                                            MonthlyCharges: 'Monthly Charges ($)',
+                                            TotalCharges: 'Total Charges ($)',
+                                            SeniorCitizen: 'Senior Citizen',
+                                        };
+                                        const label = LABEL_MAP[col]
+                                            || col
+                                                .replace(/_/g, ' ')
+                                                .replace(/\b\w/g, c => c.toUpperCase());
 
-                                    {/* Categorical Fields */}
-                                    {metadata.categorical_cols?.map((col) => {
-                                        const options = metadata.categorical_values?.[col] || [];
-                                        return (
-                                            <div key={col}>
-                                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                    {col}
-                                                </label>
+                                        const isCategorical = (metadata.categorical_cols || []).includes(col);
+                                        const colLower = col.toLowerCase();
+                                        const metaOptions = metadata.categorical_values?.[col];
+
+                                        // ── Decide input type ──────────────────────────────────────
+                                        // NOTE: Check special patterns FIRST — binary fields like
+                                        // gender/Phone/Partner live in numerical_cols (encoded 0/1)
+                                        // so isCategorical would be false for them.
+                                        let inputEl;
+
+                                        if (colLower.includes('gender') || colLower === 'sex') {
+                                            // Gender → Male / Female
+                                            inputEl = (
                                                 <select
-                                                    value={formData[col] || ''}
-                                                    onChange={(e) => setFormData({ ...formData, [col]: e.target.value })}
-                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                                    title={`Select the applicable ${col} category`}
+                                                    value={formData[col] ?? 0}
+                                                    onChange={e => setFormData({ ...formData, [col]: Number(e.target.value) })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                                                 >
-                                                    {options.map((option) => (
-                                                        <option key={option} value={option}>
-                                                            {option}
-                                                        </option>
+                                                    <option value={0}>Male</option>
+                                                    <option value={1}>Female</option>
+                                                </select>
+                                            );
+                                        } else if (colLower === 'contract_period' || colLower.endsWith('contractperiod')) {
+                                            // Contract period → 1 / 6 / 12 months
+                                            inputEl = (
+                                                <select
+                                                    value={formData[col] ?? 1}
+                                                    onChange={e => setFormData({ ...formData, [col]: Number(e.target.value) })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                                >
+                                                    <option value={1}>1 Month</option>
+                                                    <option value={6}>6 Months</option>
+                                                    <option value={12}>12 Months</option>
+                                                </select>
+                                            );
+                                        } else if (
+                                            (metadata.known_binary_fields || []).includes(col)
+                                            || ['phone', 'partner', 'promo_friends', 'group_visits',
+                                                'near_location', 'paperlessbilling', 'multiplelines',
+                                                'phoneservice', 'seniorcitizen'].includes(colLower)
+                                        ) {
+                                            // Binary → No / Yes
+                                            inputEl = (
+                                                <select
+                                                    value={formData[col] ?? 0}
+                                                    onChange={e => setFormData({ ...formData, [col]: Number(e.target.value) })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                                >
+                                                    <option value={0}>No</option>
+                                                    <option value={1}>Yes</option>
+                                                </select>
+                                            );
+                                        } else if (metaOptions && metaOptions.length > 0) {
+                                            // String categorical with known options
+                                            inputEl = (
+                                                <select
+                                                    value={formData[col] ?? metaOptions[0]}
+                                                    onChange={e => setFormData({ ...formData, [col]: e.target.value })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                                >
+                                                    {metaOptions.map(opt => (
+                                                        <option key={opt} value={opt}>{opt}</option>
                                                     ))}
                                                 </select>
+                                            );
+                                        } else if (isCategorical) {
+                                            // Unknown categorical → free text
+                                            inputEl = (
+                                                <input
+                                                    type="text"
+                                                    value={formData[col] ?? ''}
+                                                    onChange={e => setFormData({ ...formData, [col]: e.target.value })}
+                                                    placeholder={`Enter ${label.toLowerCase()}`}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                />
+                                            );
+                                        } else {
+                                            // Numerical field
+                                            inputEl = (
+                                                <input
+                                                    type="number"
+                                                    step="any"
+                                                    min="0"
+                                                    value={formData[col] ?? 0}
+                                                    onChange={e => setFormData({ ...formData, [col]: parseFloat(e.target.value) || 0 })}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                    title={`Enter a numeric value for ${label}`}
+                                                />
+                                            );
+                                        }
+
+                                        return (
+                                            <div key={col}>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                                                    {label}
+                                                    {isCategorical && (
+                                                        <span className="text-[10px] font-normal text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                                            Category
+                                                        </span>
+                                                    )}
+                                                </label>
+                                                {inputEl}
                                             </div>
                                         );
                                     })}
@@ -592,7 +684,7 @@ export default function CustomerIntelligence() {
                             <div className="bg-white rounded-lg shadow-sm p-6">
                                 <h3 className="text-lg font-semibold text-gray-900 mb-1">Risk Assessment</h3>
                                 <p className="text-sm text-gray-600 mb-4">
-                                    AI-generated churn probability and key risk drivers
+                                    AI-generated churn probability, key risk drivers &amp; retention strategy
                                 </p>
 
                                 {!predictionResult ? (
@@ -602,57 +694,178 @@ export default function CustomerIntelligence() {
                                             Enter customer attributes and click<br />"Assess Churn Risk" to generate prediction
                                         </p>
                                     </div>
-                                ) : (
-                                    <div className="space-y-6">
-                                        {/* Churn Probability Gauge */}
-                                        <div className="text-center p-6 bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg">
-                                            <p className="text-sm text-gray-600 mb-2">Churn Probability</p>
-                                            <div className="text-5xl font-bold text-gray-900 mb-2">
-                                                {((predictionResult.churn_probability || 0) * 100).toFixed(1)}%
-                                            </div>
-                                            <p className="text-xs text-gray-500">
-                                                Likelihood this customer will stop using your service
-                                            </p>
-                                        </div>
+                                ) : (() => {
+                                    // ── Helpers (mirrors CustomerReportModal) ────────────────────
+                                    const humanise = (name) =>
+                                        name.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').replace(/^\s/, '')
+                                            .split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
-                                        {/* Risk Level Badge */}
-                                        <div className="text-center">
-                                            <span className={`inline-block px-6 py-3 rounded-full text-lg font-bold border-2 ${getRiskBadgeColor(predictionResult.risk_level)}`}>
-                                                {getRiskIcon(predictionResult.risk_level)} {predictionResult.risk_level?.toUpperCase()} RISK
-                                            </span>
-                                            <p className="text-xs text-gray-500 mt-2">
-                                                Urgency of intervention required
-                                            </p>
-                                        </div>
+                                    const formatVal = (val) => {
+                                        if (val === null || val === undefined) return '—';
+                                        if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+                                        const n = parseFloat(val);
+                                        if (!isNaN(n)) {
+                                            if (n > 1000) return `$${Math.round(n).toLocaleString()}`;
+                                            return Number.isInteger(n) ? n.toString() : n.toFixed(2);
+                                        }
+                                        return String(val);
+                                    };
 
-                                        {/* Key Risk Drivers */}
-                                        {predictionResult.shap_values && predictionResult.shap_values.length > 0 && (
-                                            <div>
-                                                <h4 className="font-semibold text-gray-900 mb-3">Key Risk Drivers</h4>
-                                                <p className="text-xs text-gray-500 mb-3">
-                                                    SHAP (SHapley Additive exPlanations) - game-theory based AI interpretability
-                                                </p>
-                                                <div className="space-y-3">
-                                                    {predictionResult.shap_values.slice(0, 5).map((shap, idx) => (
-                                                        <div key={idx} className="border border-gray-200 rounded-lg p-3">
-                                                            <div className="flex items-start justify-between mb-1">
-                                                                <span className="font-medium text-gray-900">
-                                                                    {shap.value > 0 ? '↑' : '↓'} {shap.feature}
-                                                                </span>
-                                                                <span className="text-sm text-gray-600">
-                                                                    {shap.customer_value}
-                                                                </span>
-                                                            </div>
-                                                            <div className="text-xs text-gray-500">
-                                                                {shap.value > 0 ? '+' : ''}{shap.value.toFixed(3)} risk impact
-                                                            </div>
-                                                        </div>
-                                                    ))}
+                                    const prob = predictionResult.churn_probability || 0;
+                                    const probPct = (prob * 100).toFixed(1);
+                                    const riskLevel = predictionResult.risk_level?.toUpperCase() || 'UNKNOWN';
+                                    const riskColorClass = prob > 0.7
+                                        ? 'text-red-600 bg-red-50 border-red-200'
+                                        : prob > 0.3
+                                            ? 'text-yellow-600 bg-yellow-50 border-yellow-200'
+                                            : 'text-green-600 bg-green-50 border-green-200';
+
+                                    // shap_values from /explain is already a dict: {feature: float}
+                                    // Handle both dict and array formats defensively
+                                    const rawShap = predictionResult.shap_values || {};
+                                    let shapDict = {};
+                                    if (Array.isArray(rawShap)) {
+                                        // array format: [{feature, value}]
+                                        rawShap.forEach(s => { shapDict[s.feature] = s.value; });
+                                    } else if (typeof rawShap === 'object') {
+                                        // dict format: {feature: float}  ← what backend actually returns
+                                        shapDict = rawShap;
+                                    }
+
+                                    // Sort by |impact| for bars
+                                    const topSHAP = Object.entries(shapDict)
+                                        .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
+                                        .slice(0, 5);
+
+                                    // Retention strategy (same PATTERNS as modal)
+                                    const topRiskFeatures = Object.entries(shapDict)
+                                        .filter(([, v]) => v > 0).sort(([, a], [, b]) => b - a)
+                                        .slice(0, 3).map(([k]) => k.toLowerCase());
+
+                                    const PATTERNS = [
+                                        { match: f => /contract|month.to.month|annual/.test(f), title: 'Address Contract Risk', action: 'Offer upgrade to an annual or 2-year contract with a loyalty discount' },
+                                        { match: f => /charge|price|fee|amount|cost|bill/.test(f), title: 'Address Pricing Risk', action: 'Provide a personalised pricing review or apply a targeted fee waiver' },
+                                        { match: f => /tenure|age|duration|month|year|lifetime/.test(f), title: 'Loyalty & Onboarding Focus', action: 'Send loyalty recognition and an early-tenure onboarding kit' },
+                                        { match: f => /support|ticket|complaint|call|issue/.test(f), title: 'Resolve Support Issues', action: 'Escalate open tickets to the senior support team immediately' },
+                                        { match: f => /product|service|account|plan|feature/.test(f), title: 'Improve Product Experience', action: 'Offer a free 3-month upgrade to the premium product tier' },
+                                        { match: f => /balance|credit|loan|debt/.test(f), title: 'Financial Risk Intervention', action: 'Assign a dedicated relationship manager to assist with financial concerns' },
+                                        { match: f => /transaction|activity|login|session|usage|visit|frequency/.test(f), title: 'Re-Engagement Campaign', action: 'Launch a targeted re-engagement campaign with usage incentives' },
+                                        { match: f => /lifetime|loyalty|member/.test(f), title: 'Membership Appreciation', action: 'Grant complimentary access to premium facilities or exclusive events' },
+                                        { match: f => /location|partner|friend|group|social/.test(f), title: 'Community Engagement', action: 'Invite to referral programs or social community events' },
+                                    ];
+
+                                    const actions = []; const titleParts = [];
+                                    for (const feat of topRiskFeatures) {
+                                        const matched = PATTERNS.find(p => p.match(feat));
+                                        if (matched) { titleParts.push(matched.title); if (!actions.includes(matched.action)) actions.push(matched.action); }
+                                        else actions.push(`Personalised outreach focused on their "${humanise(feat)}" risk factor`);
+                                    }
+                                    if (actions.length < 2) actions.push('Monitor engagement closely over the next 30 days');
+                                    const defaults = { high: { title: 'Immediate Retention Action Required', actions: ['Offer 15% discount on next 3 months', 'Schedule check-in call with Success Manager', 'Review recent support tickets'] }, med: { title: 'Proactive Engagement Suggested', actions: ['Send educational content relevant to their usage', 'Highlight unused features', 'Offer free consultation'] }, low: { title: 'Nurture & Upsell Opportunity', actions: ['Request referral or testimonial', 'Suggest upgrade to annual plan', 'Invite to beta test'] } };
+                                    const strategy = actions.length > 0 ? { title: titleParts[0] || (prob > 0.7 ? defaults.high.title : prob > 0.3 ? defaults.med.title : defaults.low.title), actions } : prob > 0.7 ? defaults.high : prob > 0.3 ? defaults.med : defaults.low;
+
+                                    return (
+                                        <div className="space-y-6">
+                                            {/* ── Top Stat Cards ── */}
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                                    <div className="text-xs text-gray-500 mb-1">Churn Probability</div>
+                                                    <div className="text-3xl font-bold text-gray-900">{probPct}%</div>
+                                                    <div className="w-full bg-gray-200 h-1.5 mt-2 rounded-full overflow-hidden">
+                                                        <div className={`h-full ${prob > 0.5 ? 'bg-red-500' : 'bg-green-500'}`} style={{ width: `${prob * 100}%` }} />
+                                                    </div>
+                                                </div>
+                                                <div className={`p-4 rounded-xl border ${riskColorClass}`}>
+                                                    <div className="text-xs mb-1 opacity-70">Risk Level</div>
+                                                    <div className="text-2xl font-bold">{getRiskIcon(predictionResult.risk_level)} {riskLevel}</div>
+                                                    <div className="text-xs mt-1 opacity-60">Urgency of intervention</div>
                                                 </div>
                                             </div>
-                                        )}
-                                    </div>
-                                )}
+
+                                            {/* ── Key Risk Drivers ── */}
+                                            <div>
+                                                <h4 className="font-bold text-gray-900 flex items-center gap-2 mb-3">
+                                                    <TrendingUp className="w-4 h-4 text-blue-600" /> Key Risk Drivers
+                                                </h4>
+                                                <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                                                    {topSHAP.length > 0 ? (
+                                                        <div className="space-y-3">
+                                                            {topSHAP.map(([feature, impact], idx) => {
+                                                                const isNeg = impact < 0;
+                                                                const width = Math.min(Math.abs(impact) * 100 * 2, 100);
+                                                                const customerValue = formData[feature];
+                                                                return (
+                                                                    <div key={idx}>
+                                                                        <div className="flex justify-between text-sm mb-1">
+                                                                            <span className="font-medium text-gray-700">{humanise(feature)}</span>
+                                                                            <span className={isNeg ? 'text-green-600' : 'text-red-600 font-semibold'}>
+                                                                                {isNeg ? '↓ Reduces Risk' : '↑ Increases Risk'}
+                                                                            </span>
+                                                                        </div>
+                                                                        {customerValue !== undefined && (
+                                                                            <div className="text-xs text-gray-400 mb-1">Value: {formatVal(customerValue)}</div>
+                                                                        )}
+                                                                        <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden flex">
+                                                                            <div className="w-1/2 flex justify-end">
+                                                                                {isNeg && <div className="h-full bg-green-500 rounded-l-full" style={{ width: `${width}%` }} />}
+                                                                            </div>
+                                                                            <div className="w-1/2">
+                                                                                {!isNeg && <div className="h-full bg-red-500 rounded-r-full" style={{ width: `${width}%` }} />}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                            <p className="text-[10px] text-gray-400 pt-1">SHAP — SHapley Additive exPlanations (game-theory based AI interpretability)</p>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="text-center py-6 text-gray-400 text-sm">SHAP analysis not available</div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* ── Retention Strategy ── */}
+                                            <div>
+                                                <h4 className="font-bold text-gray-900 flex items-center gap-2 mb-3">
+                                                    <CheckCircle className="w-4 h-4 text-purple-600" /> Retention Strategy
+                                                </h4>
+                                                <div className="bg-gradient-to-br from-purple-50 to-white border border-purple-100 rounded-xl p-4 shadow-sm">
+                                                    <div className="font-semibold text-purple-900 mb-3">{strategy.title}</div>
+                                                    <ul className="space-y-2">
+                                                        {strategy.actions.map((action, i) => (
+                                                            <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                                                                <CheckCircle className="w-4 h-4 text-purple-500 mt-0.5 flex-shrink-0" />
+                                                                {action}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                    {topSHAP.length > 0 && (
+                                                        <div className="mt-3 pt-3 border-t border-purple-100 text-xs text-purple-600">
+                                                            Based on top risk drivers: {topSHAP.slice(0, 2).map(([f]) => humanise(f)).join(', ')}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* ── Submitted Feature Profile ── */}
+                                            <div>
+                                                <h4 className="font-bold text-gray-900 mb-3">Submitted Profile</h4>
+                                                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 max-h-48 overflow-y-auto text-sm">
+                                                    <table className="w-full">
+                                                        <tbody>
+                                                            {Object.entries(formData).map(([key, val]) => (
+                                                                <tr key={key} className="border-b border-gray-100 last:border-0 hover:bg-gray-100">
+                                                                    <td className="py-1.5 text-gray-500 font-medium pr-2">{humanise(key)}</td>
+                                                                    <td className="py-1.5 text-gray-900 text-right font-medium">{formatVal(val)}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     )}

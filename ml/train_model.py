@@ -118,6 +118,8 @@ def prepare_features(df, target_col, customer_id_col):
     
     numerical_cols = []
     categorical_cols = []
+    known_binary_fields = []   # 0/1 or Yes/No fields (still encoded as numeric)
+    categorical_values = {}    # string-valued categoricals: {col: [options]}
     
     for col in df.columns:
         if col in [target_col, customer_id_col]:
@@ -129,10 +131,19 @@ def prepare_features(df, target_col, customer_id_col):
         
         if ratio > 0.8:
             numerical_cols.append(col)
+            # Check if this is actually a binary 0/1 field
+            unique_vals = set(df[col].dropna().unique())
+            if unique_vals.issubset({0, 1, '0', '1'}):
+                known_binary_fields.append(col)
+            elif unique_vals.issubset({'Yes', 'No', 'yes', 'no', 'YES', 'NO'}):
+                known_binary_fields.append(col)
         else:
             categorical_cols.append(col)
+            # Capture unique string options (up to 20) for dropdown
+            options = sorted(df[col].dropna().astype(str).unique().tolist())[:20]
+            categorical_values[col] = options
     
-    print(f"[OK] Numerical: {len(numerical_cols)} | Categorical: {len(categorical_cols)}")
+    print(f"[OK] Numerical: {len(numerical_cols)} | Categorical: {len(categorical_cols)} | Binary fields: {len(known_binary_fields)}")
     
     # Build feature matrix
     X = pd.DataFrame(index=df.index)
@@ -166,7 +177,7 @@ def prepare_features(df, target_col, customer_id_col):
         X[numerical_cols] = scaler.fit_transform(X[numerical_cols])
         print("[OK] Numerical features scaled")
     
-    return X, y, encoders, scaler, numerical_cols, categorical_cols
+    return X, y, encoders, scaler, numerical_cols, categorical_cols, known_binary_fields, categorical_values
 
 # ============================================================================
 # STEP 2: TRAIN MODEL
@@ -313,12 +324,13 @@ def save_and_zip(model, scaler, encoders, explainer, metadata):
 def main(file_path):
     df = load_data(file_path)
     df, target_col, id_col = detect_schema(df)
-    X, y, encoders, scaler, num_cols, cat_cols = prepare_features(df, target_col, id_col)
+    X, y, encoders, scaler, num_cols, cat_cols, binary_fields, cat_values = prepare_features(df, target_col, id_col)
     model, X_train, X_test, y_test, y_prob, auc, acc = train_model(X, y)
     explainer = generate_shap(model, X_train)
     healthy = test_predictions(y_prob)
     
     # Metadata
+    from datetime import date
     feat_imp = {f: float(i) for f, i in zip(X.columns, model.feature_importances_)}
     metadata = {
         "model_name": "XGBoost",
@@ -330,8 +342,10 @@ def main(file_path):
         "numerical_cols": num_cols,
         "categorical_cols": cat_cols,
         "feature_cols": list(X.columns),
+        "known_binary_fields": binary_fields,
+        "categorical_values": cat_values,
         "feature_importance": dict(sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)),
-        "training_date": "2026-02-24"
+        "training_date": str(date.today())
     }
     
     save_and_zip(model, scaler, encoders, explainer, metadata)
