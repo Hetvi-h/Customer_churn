@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { predictionsApi } from '../services/api';
 import { useUpload } from '../contexts/UploadContext';
+import { TrainingProgress, HelpTooltip, InlineError } from '../components/Common';
 import {
     Upload as UploadIcon,
     CheckCircle,
@@ -16,6 +17,29 @@ import {
     PieChart
 } from 'lucide-react';
 
+const TRAINING_STEPS = [
+    'Uploading file',
+    'Parsing columns & schema',
+    'Training prediction model',
+    'Calculating SHAP explanations',
+    'Saving predictions',
+];
+
+function friendlyError(err) {
+    const detail = err?.response?.data?.detail || '';
+    const status = err?.response?.status;
+    if (status === 413 || detail.toLowerCase().includes('too large'))
+        return 'File is too large. Please use a file under 50 MB.';
+    if (detail.toLowerCase().includes('column') || detail.toLowerCase().includes('format') || detail.toLowerCase().includes('csv'))
+        return 'File format issue: make sure it is a valid CSV or Excel file with a churn column.';
+    if (detail.toLowerCase().includes('train') || detail.toLowerCase().includes('model'))
+        return 'Model training failed. Check that your file has enough rows and a clear churn column, then try again.';
+    if (!navigator.onLine)
+        return 'No internet connection. Please check your network and try again.';
+    if (detail) return detail;
+    return 'Something went wrong. Please try again.';
+}
+
 /**
  * Upload Data Page - Entry Point After Processing
  * 
@@ -27,11 +51,13 @@ const UploadData = () => {
     const { markDataUploaded, uploadResults, hasUploadedData, resetUpload } = useUpload();
     const [file, setFile] = useState(null);
     const [uploading, setUploading] = useState(false);
-    const [result, setResult] = useState(null);
+    const [result, setResult] = useState(() => uploadResults || null);
     const [error, setError] = useState(null);
+    const [trainingStep, setTrainingStep] = useState(0);
+    const [elapsed, setElapsed] = useState(0);
+    const elapsedRef = useRef(null);
+    const stepRef = useRef(null);
 
-    // NOTE: We intentionally do NOT restore previous results on mount.
-    // Navigating to /upload should always show the upload form.
     const [dragActive, setDragActive] = useState(false);
 
     const handleDrag = (e) => {
@@ -72,27 +98,37 @@ const UploadData = () => {
 
         setUploading(true);
         setError(null);
+        setTrainingStep(0);
+        setElapsed(0);
+
+        // Elapsed timer
+        elapsedRef.current = setInterval(() => setElapsed(s => s + 1), 1000);
+
+        // Animate through steps (rough time-boxing)
+        const stepDelays = [500, 1500, 3000, 7000]; // ms between steps
+        stepDelays.forEach((delay, i) => {
+            stepRef.current = setTimeout(() => setTrainingStep(i + 1), delay);
+        });
 
         try {
             const response = await predictionsApi.uploadCSV(file);
             const data = response.data;
 
+            setTrainingStep(TRAINING_STEPS.length); // all done
             setResult(data);
             setError(null);
-
-            // Mark data as uploaded and store FULL results
             markDataUploaded(data);
 
-            // Scroll to results section
             setTimeout(() => {
                 document.getElementById('results-section')?.scrollIntoView({ behavior: 'smooth' });
             }, 300);
 
         } catch (err) {
             console.error('Upload error:', err);
-            setError(err.response?.data?.detail || 'Failed to upload file');
+            setError(friendlyError(err));
             setResult(null);
         } finally {
+            clearInterval(elapsedRef.current);
             setUploading(false);
         }
     };
@@ -101,6 +137,8 @@ const UploadData = () => {
         setFile(null);
         setResult(null);
         setError(null);
+        setTrainingStep(0);
+        setElapsed(0);
         resetUpload();
     };
 
@@ -297,12 +335,18 @@ const UploadData = () => {
                         )}
                     </div>
 
-                    {error && (
-                        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-                            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                            <p className="text-red-800">{error}</p>
-                        </div>
-                    )}
+                    <InlineError message={error} onDismiss={() => setError(null)} onRetry={file ? handleUpload : undefined} />
+                </div>
+            )}
+
+            {/* Training Progress Overlay */}
+            {uploading && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center">
+                    <TrainingProgress
+                        steps={TRAINING_STEPS}
+                        currentStep={trainingStep}
+                        elapsed={elapsed}
+                    />
                 </div>
             )}
 
@@ -333,23 +377,23 @@ const UploadData = () => {
                             <div className="text-xs text-gray-500 mt-1">Customers</div>
                         </div>
                         <div className="bg-red-50 border border-red-200 rounded-lg shadow-md p-6 text-center">
-                            <div className="text-sm font-medium text-red-600 uppercase mb-2">🔴 High Risk</div>
+                            <div className="text-sm font-medium text-[var(--color-risk-high)] uppercase mb-2">🔴 High Risk</div>
                             <div className="text-3xl font-bold text-red-900">{highRisk.toLocaleString()}</div>
-                            <div className="text-xs text-red-600 mt-1">
+                            <div className="text-xs text-[var(--color-risk-high)] mt-1">
                                 ({totalCustomers > 0 ? ((highRisk / totalCustomers) * 100).toFixed(1) : 0}%)
                             </div>
                         </div>
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg shadow-md p-6 text-center">
-                            <div className="text-sm font-medium text-yellow-600 uppercase mb-2">🟡 Medium</div>
+                            <div className="text-sm font-medium text-[var(--color-risk-medium)] uppercase mb-2">🟡 Medium</div>
                             <div className="text-3xl font-bold text-yellow-900">{mediumRisk.toLocaleString()}</div>
-                            <div className="text-xs text-yellow-600 mt-1">
+                            <div className="text-xs text-[var(--color-risk-medium)] mt-1">
                                 ({totalCustomers > 0 ? ((mediumRisk / totalCustomers) * 100).toFixed(1) : 0}%)
                             </div>
                         </div>
                         <div className="bg-green-50 border border-green-200 rounded-lg shadow-md p-6 text-center">
-                            <div className="text-sm font-medium text-green-600 uppercase mb-2">🟢 Low</div>
+                            <div className="text-sm font-medium text-[var(--color-risk-low)] uppercase mb-2">🟢 Low</div>
                             <div className="text-3xl font-bold text-green-900">{lowRisk.toLocaleString()}</div>
-                            <div className="text-xs text-green-600 mt-1">
+                            <div className="text-xs text-[var(--color-risk-low)] mt-1">
                                 ({totalCustomers > 0 ? ((lowRisk / totalCustomers) * 100).toFixed(1) : 0}%)
                             </div>
                         </div>
@@ -367,17 +411,23 @@ const UploadData = () => {
                                 <div className="font-bold text-gray-900 mt-1">{modelName}</div>
                             </div>
                             <div>
-                                <span className="text-gray-600">ROC-AUC:</span>
+                                <span className="text-gray-600 flex items-center">ROC-AUC
+                                    <HelpTooltip text="Area Under the ROC Curve. 0.5 = random guess, 1.0 = perfect. Above 0.75 is good for churn prediction." />
+                                </span>
                                 <div className="font-bold text-gray-900 mt-1">
                                     {rocAuc.toFixed(4)} <span className="text-green-600">✅</span>
                                 </div>
                             </div>
                             <div>
-                                <span className="text-gray-600">Accuracy:</span>
+                                <span className="text-gray-600 flex items-center">Accuracy
+                                    <HelpTooltip text="Percentage of total predictions that were correct. Can be misleading with imbalanced datasets — ROC-AUC is more reliable." />
+                                </span>
                                 <div className="font-bold text-gray-900 mt-1">{(accuracy * 100).toFixed(2)}%</div>
                             </div>
                             <div>
-                                <span className="text-gray-600">Features Detected:</span>
+                                <span className="text-gray-600 flex items-center">Features Detected
+                                    <HelpTooltip text="The number of customer attributes (columns) your model uses to predict churn. More relevant features generally mean better predictions." />
+                                </span>
                                 <div className="font-bold text-gray-900 mt-1">{featureCols.length}</div>
                             </div>
                         </div>

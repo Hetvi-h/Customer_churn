@@ -23,12 +23,12 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { useUpload } from '../contexts/UploadContext';
-import { dashboardApi, predictionsApi } from '../services/api';
+import { useApiData } from '../hooks/useSwrFetcher';
 
 const RISK_COLORS = {
-  high: '#ef4444',
-  medium: '#f59e0b',
-  low: '#22c55e'
+  high: 'var(--color-risk-high)',
+  medium: 'var(--color-risk-medium)',
+  low: 'var(--color-risk-low)'
 };
 
 /**
@@ -40,45 +40,41 @@ const RISK_COLORS = {
  */
 export default function Segments() {
   const navigate = useNavigate();
-  const { hasUploadedData } = useUpload();
-  const [riskDistribution, setRiskDistribution] = useState(null);
-  const [metadata, setMetadata] = useState(null);
-  const [topFeatureData, setTopFeatureData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { hasUploadedData, uploadResults } = useUpload();
 
-  useEffect(() => {
-    if (!hasUploadedData) {
-      navigate('/upload');
-      return;
-    }
-    fetchData();
-  }, [hasUploadedData, navigate]);
-
-  const fetchData = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Fetch risk distribution and metadata
-      const [riskRes, metaRes] = await Promise.all([
-        dashboardApi.getRiskDistribution(),
-        predictionsApi.getMetadata()
-      ]);
-
-      setRiskDistribution(riskRes.data);
-      setMetadata(metaRes.data);
-
-      // TODO: Fetch churn rate by top feature from backend
-      // For now, we'll generate placeholder data
-      setTopFeatureData(null);
-    } catch (err) {
-      console.error('Error fetching segments data:', err);
-      setError('Failed to load segments data');
-    } finally {
-      setLoading(false);
-    }
+  const summary = uploadResults?.summary || {};
+  const risksFromUpload = {
+    high: summary.high_risk || 0,
+    medium: summary.medium_risk || 0,
+    low: summary.low_risk || 0,
   };
+
+  const hasContextRisks = risksFromUpload.high > 0 || risksFromUpload.medium > 0 || risksFromUpload.low > 0;
+
+  // Conditionally fetch risk distribution only if we don't have it in the upload context
+  const { data: riskDistributionData, error: riskError, isLoading: loadingRisk, mutate: mutateRisk } = useApiData(
+    hasUploadedData && !hasContextRisks ? '/dashboard/risk-distribution' : null
+  );
+
+  // Always fetch metadata for feature importance
+  const { data: metadata, error: metadataError, isLoading: loadingMetadata, mutate: mutateMetadata } = useApiData(
+    hasUploadedData ? '/metadata' : null
+  );
+
+  const riskDistribution = hasContextRisks ? risksFromUpload : riskDistributionData;
+  const loading = loadingRisk || loadingMetadata;
+  const errorObj = riskError || metadataError;
+  const error = errorObj ? errorObj.info?.detail || errorObj.message || 'Failed to load segments data' : null;
+
+  const fetchData = () => {
+    mutateRisk();
+    mutateMetadata();
+  };
+
+  if (!hasUploadedData) {
+    // Return a dummy to avoid React calling hooks out of order if we navigated away, though navigate happens immediately
+    return null;
+  }
 
   if (!hasUploadedData) {
     return null;
@@ -175,12 +171,12 @@ export default function Segments() {
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-red-600">🔴 High Risk</p>
-                      <p className="text-2xl font-bold text-red-900">
+                      <p className="text-sm font-medium" style={{ color: 'var(--color-risk-high)' }}>🔴 High Risk</p>
+                      <p className="text-2xl font-bold" style={{ color: 'var(--color-risk-high)' }}>
                         {riskDistribution?.high?.toLocaleString() || 0}
                       </p>
                     </div>
-                    <p className="text-sm text-red-600">
+                    <p className="text-sm" style={{ color: 'var(--color-risk-high)' }}>
                       {totalCustomers > 0
                         ? ((riskDistribution?.high / totalCustomers) * 100).toFixed(1)
                         : 0}%
@@ -191,12 +187,12 @@ export default function Segments() {
                 <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-yellow-600">🟡 Medium Risk</p>
-                      <p className="text-2xl font-bold text-yellow-900">
+                      <p className="text-sm font-medium" style={{ color: 'var(--color-risk-medium)' }}>🟡 Medium Risk</p>
+                      <p className="text-2xl font-bold" style={{ color: 'var(--color-risk-medium)' }}>
                         {riskDistribution?.medium?.toLocaleString() || 0}
                       </p>
                     </div>
-                    <p className="text-sm text-yellow-600">
+                    <p className="text-sm" style={{ color: 'var(--color-risk-medium)' }}>
                       {totalCustomers > 0
                         ? ((riskDistribution?.medium / totalCustomers) * 100).toFixed(1)
                         : 0}%
@@ -207,12 +203,12 @@ export default function Segments() {
                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-green-600">🟢 Low Risk</p>
-                      <p className="text-2xl font-bold text-green-900">
+                      <p className="text-sm font-medium" style={{ color: 'var(--color-risk-low)' }}>🟢 Low Risk</p>
+                      <p className="text-2xl font-bold" style={{ color: 'var(--color-risk-low)' }}>
                         {riskDistribution?.low?.toLocaleString() || 0}
                       </p>
                     </div>
-                    <p className="text-sm text-green-600">
+                    <p className="text-sm" style={{ color: 'var(--color-risk-low)' }}>
                       {totalCustomers > 0
                         ? ((riskDistribution?.low / totalCustomers) * 100).toFixed(1)
                         : 0}%
@@ -257,13 +253,13 @@ export default function Segments() {
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-red-600" />
+                    <Users className="w-4 h-4 text-[var(--color-risk-high)]" />
                     <span className="text-red-900">
                       {riskDistribution?.high?.toLocaleString() || 0} customers
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-red-600" />
+                    <TrendingUp className="w-4 h-4 text-[var(--color-risk-high)]" />
                     <span className="text-red-900">
                       Avg Churn Risk: {'>70%'}
                     </span>
@@ -275,11 +271,11 @@ export default function Segments() {
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={() => navigate('/customers')}
-                    className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm font-medium"
+                    className="flex-1 px-3 py-2 bg-[var(--color-risk-high)] text-white rounded-lg hover:opacity-90 text-sm font-medium"
                   >
                     View Customers
                   </button>
-                  <button className="px-3 py-2 bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-100 text-sm">
+                  <button className="px-3 py-2 bg-white border border-red-300 text-[var(--color-risk-high)] rounded-lg hover:bg-red-100 text-sm">
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
@@ -295,13 +291,13 @@ export default function Segments() {
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-yellow-600" />
+                    <Users className="w-4 h-4 text-[var(--color-risk-medium)]" />
                     <span className="text-yellow-900">
                       {riskDistribution?.medium?.toLocaleString() || 0} customers
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-yellow-600" />
+                    <TrendingUp className="w-4 h-4 text-[var(--color-risk-medium)]" />
                     <span className="text-yellow-900">
                       Avg Churn Risk: 40-70%
                     </span>
@@ -313,11 +309,11 @@ export default function Segments() {
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={() => navigate('/customers')}
-                    className="flex-1 px-3 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm font-medium"
+                    className="flex-1 px-3 py-2 bg-[var(--color-risk-medium)] text-white rounded-lg hover:opacity-90 text-sm font-medium"
                   >
                     View Customers
                   </button>
-                  <button className="px-3 py-2 bg-white border border-yellow-300 text-yellow-700 rounded-lg hover:bg-yellow-100 text-sm">
+                  <button className="px-3 py-2 bg-white border border-yellow-300 text-[var(--color-risk-medium)] rounded-lg hover:bg-yellow-100 text-sm">
                     <Download className="w-4 h-4" />
                   </button>
                 </div>
@@ -333,13 +329,13 @@ export default function Segments() {
                 </div>
                 <div className="space-y-2 text-sm">
                   <div className="flex items-center gap-2">
-                    <Users className="w-4 h-4 text-green-600" />
+                    <Users className="w-4 h-4 text-[var(--color-risk-low)]" />
                     <span className="text-green-900">
                       {riskDistribution?.low?.toLocaleString() || 0} customers
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-green-600" />
+                    <TrendingUp className="w-4 h-4 text-[var(--color-risk-low)]" />
                     <span className="text-green-900">
                       Avg Churn Risk: {'<40%'}
                     </span>
@@ -351,11 +347,11 @@ export default function Segments() {
                 <div className="mt-4 flex gap-2">
                   <button
                     onClick={() => navigate('/customers')}
-                    className="flex-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium"
+                    className="flex-1 px-3 py-2 bg-[var(--color-risk-low)] text-white rounded-lg hover:opacity-90 text-sm font-medium"
                   >
                     View Customers
                   </button>
-                  <button className="px-3 py-2 bg-white border border-green-300 text-green-700 rounded-lg hover:bg-green-100 text-sm">
+                  <button className="px-3 py-2 bg-white border border-green-300 text-[var(--color-risk-low)] rounded-lg hover:bg-green-100 text-sm">
                     <Download className="w-4 h-4" />
                   </button>
                 </div>

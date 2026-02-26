@@ -1,12 +1,20 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+import os
+
+# Load .env before any other imports that read env vars
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
+
 from .config import API_TITLE, API_VERSION, API_DESCRIPTION
 from .database import init_db
 from .ml_service import predictor
 from .schemas import HealthResponse
 
 from .routers import customers, predictions, dashboard, segments, trends, model, metadata
+from .routers import auth as auth_router
+from .routers import profile as profile_router
 
 
 @asynccontextmanager
@@ -63,6 +71,8 @@ app.include_router(segments.router, prefix="/api")
 app.include_router(trends.router, prefix="/api")
 app.include_router(model.router, prefix="/api")
 app.include_router(metadata.router)  # Already has /api/metadata prefix
+app.include_router(auth_router.router)  # /api/auth/*
+app.include_router(profile_router.router)  # /api/profile
 
 
 @app.get("/", tags=["Root"])

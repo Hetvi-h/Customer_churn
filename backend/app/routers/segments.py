@@ -232,7 +232,6 @@ def get_segment_insights(segment_id: str, db: Session = Depends(get_db)):
                 "description": "These customers are stable.",
                 "recommendation": "Upsell opportunities or referral requests."
             })
-            
         return {
             "segment_id": segment_id,
             "insights": insights,
@@ -245,3 +244,68 @@ def get_segment_insights(segment_id: str, db: Session = Depends(get_db)):
             "insights": [],
             "metrics_summary": {}
         }
+
+
+import json as _json
+
+@router.get("/churn-by-feature/{feature}")
+def churn_by_feature(feature: str, db: Session = Depends(get_db)):
+    """
+    Group all customers by a feature value and return avg churn rate per group.
+    Used to power the dynamic bar chart on the Segments page.
+    """
+    try:
+        rows = db.query(
+            Customer.features_json,
+            Customer.churn_probability,
+            Customer.churn_risk_level
+        ).filter(
+            Customer.features_json.isnot(None),
+            Customer.churn_probability.isnot(None)
+        ).all()
+
+        if not rows:
+            return {"feature": feature, "data": []}
+
+        groups = {}
+        for row in rows:
+            try:
+                feat_dict = _json.loads(row.features_json)
+            except Exception:
+                continue
+            if feature not in feat_dict:
+                continue
+            val = str(feat_dict[feature])
+            if val not in groups:
+                groups[val] = {"sum_prob": 0.0, "count": 0, "high": 0, "medium": 0, "low": 0}
+            groups[val]["sum_prob"] += float(row.churn_probability)
+            groups[val]["count"] += 1
+            risk = (row.churn_risk_level or "low").lower()
+            if risk in groups[val]:
+                groups[val][risk] += 1
+
+        if not groups:
+            return {"feature": feature, "data": [], "message": f"Feature '{feature}' not found in customer data."}
+
+        data = []
+        for val, g in groups.items():
+            avg_prob = g["sum_prob"] / g["count"] if g["count"] else 0
+            data.append({
+                "value": val,
+                "churn_rate": round(avg_prob * 100, 1),
+                "count": g["count"],
+                "high": g["high"],
+                "medium": g["medium"],
+                "low": g["low"],
+            })
+
+        try:
+            data.sort(key=lambda d: float(d["value"]))
+        except ValueError:
+            data.sort(key=lambda d: d["value"])
+
+        return {"feature": feature, "data": data}
+
+    except Exception as e:
+        print(f"[churn-by-feature] Error: {e}")
+        raise HTTPException(500, f"Could not compute churn by feature: {e}")

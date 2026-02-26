@@ -122,3 +122,29 @@ class ModelMetrics(Base):
     training_samples = Column(Integer)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    email         = Column(String(150), unique=True, index=True, nullable=False)
+    name          = Column(String(150), nullable=False, default="")
+    password_hash = Column(String(200), nullable=True)   # null for Google-only users
+    google_id     = Column(String(100), nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    otp_codes = relationship("OTPCode", back_populates="user", cascade="all, delete-orphan")
+
+
+class OTPCode(Base):
+    __tablename__ = "otp_codes"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
+    code       = Column(String(6), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used       = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="otp_codes")

@@ -165,11 +165,11 @@ def batch_predict(
     low_risk = 0
     total_revenue_at_risk = 0
 
-    for cust_id in batch_input.customer_ids:
-        customer = db.query(Customer).filter(Customer.customer_id == cust_id).first()
-        if not customer:
-            continue
+    customers = db.query(Customer).filter(Customer.customer_id.in_(batch_input.customer_ids)).all()
+    
+    update_mappings = []
 
+    for customer in customers:
         input_data = {
             "tenure": customer.tenure,
             "MonthlyCharges": customer.monthly_charges,
@@ -195,9 +195,12 @@ def batch_predict(
         try:
             result = predictor.predict_with_explanation(input_data)
 
-            customer.churn_probability = result["churn_probability"]
-            customer.churn_risk_level = result["risk_level"]
-            customer.last_prediction_date = datetime.utcnow()
+            update_mappings.append({
+                "id": customer.id,
+                "churn_probability": result["churn_probability"],
+                "churn_risk_level": result["risk_level"],
+                "last_prediction_date": datetime.utcnow()
+            })
 
             if result["risk_level"] == "high":
                 high_risk += 1
@@ -215,10 +218,12 @@ def batch_predict(
             ))
 
         except Exception as e:
-            print(f"Error predicting for customer {cust_id}: {e}")
+            print(f"Error predicting for customer {customer.customer_id}: {e}")
             continue
 
-    db.commit()
+    if update_mappings:
+        db.bulk_update_mappings(Customer, update_mappings)
+        db.commit()
 
     summary = {
         "total_processed": len(predictions),
@@ -428,12 +433,12 @@ async def upload_csv_for_predictions(
         X_array = predictor.batch_prepare_features(df_features)
         probabilities = predictor.model.predict_proba(X_array)[:, 1]
         
-        # Risk Levels
+        # Fixed-threshold risk segmentation: ≥0.7 = High, ≥0.3 = Medium, <0.3 = Low
         risk_levels = [predictor._get_risk_level(p) for p in probabilities]
-        
-        high_risk = sum(1 for r in risk_levels if r == "high")
+
+        high_risk   = sum(1 for r in risk_levels if r == "high")
         medium_risk = sum(1 for r in risk_levels if r == "medium")
-        low_risk = sum(1 for r in risk_levels if r == "low")
+        low_risk    = sum(1 for r in risk_levels if r == "low")
 
         # ── Compute per-customer SHAP values (single vectorised call) ──────────
         shap_per_row = [None] * len(customer_ids)  # fallback: no SHAP

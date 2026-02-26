@@ -13,7 +13,7 @@ start "Churn Frontend" cmd /k "cd frontend && node \"node_modules/vite/bin/vite.
 
 echo.
 echo Backend starting at: http://localhost:8000
-echo Frontend starting at: http://localhost:3000
+echo Frontend starting at: http://localhost:5173
 echo API Docs at: http://localhost:8000/docs
 echo.
 echo Close this window when done.

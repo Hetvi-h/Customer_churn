@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Brain,
   TrendingUp,
@@ -10,10 +10,12 @@ import {
   X,
   Upload,
   Home as HomeIcon,
-  Zap
+  Zap,
+  LogOut
 } from 'lucide-react';
 import { useState } from 'react';
 import { useUpload } from '../contexts/UploadContext';
+import { useAuth } from '../contexts/AuthContext';
 
 // Navigation items BEFORE upload
 const preUploadNavigation = [
@@ -36,7 +38,15 @@ const postUploadNavigation = [
 export default function Layout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
-  const { hasUploadedData } = useUpload();
+  const navigate = useNavigate();
+  const { hasUploadedData, resetUpload } = useUpload();
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    resetUpload(); // Clear the upload context state and localStorage
+    logout();
+    navigate('/login', { replace: true });
+  };
 
   // Choose navigation based on upload state
   const navigation = hasUploadedData ? postUploadNavigation : preUploadNavigation;
@@ -133,16 +143,43 @@ export default function Layout({ children }) {
       {/* Main content */}
       <div className="lg:pl-64">
         {/* Top bar */}
-        <div className="sticky top-0 z-30 flex items-center h-16 bg-white shadow-sm px-4 lg:px-8">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="text-gray-500 hover:text-gray-700 lg:hidden"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <h1 className="ml-4 lg:ml-0 text-xl font-semibold text-gray-800">
-            {navigation.find((n) => n.href === location.pathname)?.name || 'Churn Prediction'}
-          </h1>
+        <div className="sticky top-0 z-30 flex items-center justify-between h-16 bg-white shadow-sm px-4 lg:px-8">
+          <div className="flex items-center">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="text-gray-500 hover:text-gray-700 lg:hidden"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <h1 className="ml-4 lg:ml-0 text-xl font-semibold text-gray-800">
+              {navigation.find((n) => n.href === location.pathname)?.name || 'Churn Prediction'}
+            </h1>
+          </div>
+          {/* User avatar + logout */}
+          {user && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => navigate('/profile')}
+                className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                title="View profile"
+              >
+                <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-bold">
+                  {user.name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || '?'}
+                </div>
+                <span className="hidden sm:block text-sm text-gray-700 font-medium max-w-[120px] truncate">
+                  {user.name || user.email}
+                </span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-red-600 transition-colors px-2 py-1 rounded-lg hover:bg-red-50"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:block">Sign out</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Page content */}

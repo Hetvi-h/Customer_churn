@@ -17,7 +17,7 @@ import zipfile
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.metrics import roc_auc_score, accuracy_score
+from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score
 from xgboost import XGBClassifier
 import warnings
 warnings.filterwarnings('ignore')
@@ -209,12 +209,15 @@ def train_model(X, y):
     model.fit(X_train, y_train)
     
     y_prob = model.predict_proba(X_test)[:, 1]
+    y_pred = model.predict(X_test)
     auc = roc_auc_score(y_test, y_prob)
-    acc = accuracy_score(y_test, model.predict(X_test))
+    acc = accuracy_score(y_test, y_pred)
+    prec = precision_score(y_test, y_pred, zero_division=0)
+    rec  = recall_score(y_test, y_pred, zero_division=0)
     
-    print(f"[OK] ROC-AUC: {auc:.4f} | Accuracy: {acc:.4f}")
+    print(f"[OK] ROC-AUC: {auc:.4f} | Accuracy: {acc:.4f} | Precision: {prec:.4f} | Recall: {rec:.4f}")
     
-    return model, X_train, X_test, y_test, y_prob, auc, acc
+    return model, X_train, X_test, y_test, y_prob, auc, acc, prec, rec
 
 # ============================================================================
 # STEP 3: GENERATE SHAP EXPLAINER
@@ -325,7 +328,7 @@ def main(file_path):
     df = load_data(file_path)
     df, target_col, id_col = detect_schema(df)
     X, y, encoders, scaler, num_cols, cat_cols, binary_fields, cat_values = prepare_features(df, target_col, id_col)
-    model, X_train, X_test, y_test, y_prob, auc, acc = train_model(X, y)
+    model, X_train, X_test, y_test, y_prob, auc, acc, prec, rec = train_model(X, y)
     explainer = generate_shap(model, X_train)
     healthy = test_predictions(y_prob)
     
@@ -336,6 +339,8 @@ def main(file_path):
         "model_name": "XGBoost",
         "accuracy": float(acc),
         "roc_auc": float(auc),
+        "precision": float(prec),
+        "recall": float(rec),
         "churn_rate": float(y.mean()),
         "customer_id_col": id_col,
         "target_col": target_col,

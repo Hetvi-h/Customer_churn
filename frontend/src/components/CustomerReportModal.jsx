@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, TrendingUp, CheckCircle, Smartphone, Activity, BarChart2, User } from 'lucide-react';
+import React, { useRef } from 'react';
+import { X, TrendingUp, CheckCircle, Smartphone, Activity, BarChart2, User, Download } from 'lucide-react';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -184,6 +184,38 @@ const buildRetentionStrategy = (shapData, churnProbability) => {
 // ─── component ────────────────────────────────────────────────────────────────
 
 export default function CustomerReportModal({ customer, shapData, customerFeatures, uploadMetadata, onClose }) {
+    const reportRef = useRef(null);
+
+    const handleDownloadPdf = async () => {
+        if (!reportRef.current) return;
+        const html2pdf = (await import('html2pdf.js')).default;
+
+        // Temporarily show the PDF header for capture
+        reportRef.current.classList.add('is-generating-pdf');
+
+        const customerId = customer?.customer_id || customer?.id || 'report';
+        const opt = {
+            margin: [0.5, 0.5],
+            filename: `churn-report-${customerId}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: {
+                scale: 2,
+                useCORS: true,
+                letterRendering: true,
+                scrollY: 0,
+                windowWidth: 750
+            },
+            jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' },
+            pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+        };
+
+        try {
+            await html2pdf().set(opt).from(reportRef.current).save();
+        } finally {
+            // Re-hide the header after capture
+            reportRef.current.classList.remove('is-generating-pdf');
+        }
+    };
     if (!customer) return null;
 
     const prob = customer.churn_probability || 0;
@@ -191,9 +223,9 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
     const riskLevel = customer.churn_risk_level?.toUpperCase() || 'UNKNOWN';
 
     const getRiskColor = (p) => {
-        if (p > 0.7) return 'text-red-600 bg-red-100 border-red-200';
-        if (p > 0.3) return 'text-yellow-600 bg-yellow-100 border-yellow-200';
-        return 'text-green-600 bg-green-100 border-green-200';
+        if (p > 0.7) return 'text-[var(--color-risk-high)] bg-red-100 border-red-200';
+        if (p > 0.3) return 'text-[var(--color-risk-medium)] bg-yellow-100 border-yellow-200';
+        return 'text-[var(--color-risk-low)] bg-green-100 border-green-200';
     };
 
     // Parse SHAP — can be dict (from bulk upload storage) or null
@@ -224,10 +256,10 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto flex flex-col">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
 
-                {/* Header */}
-                <div className="flex items-center justify-between p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
+                {/* Header (Screen only - Not in PDF) */}
+                <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-white z-10 shrink-0">
                     <div className="flex items-center gap-4">
                         <div className="bg-blue-600 text-white w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold">
                             {customer.name && !customer.name.startsWith('ROW-') ? (
@@ -257,7 +289,83 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                     </button>
                 </div>
 
-                <div className="p-6 space-y-8">
+                {/* Report Content (This is what is captured in PDF) */}
+                <div
+                    ref={reportRef}
+                    className="overflow-y-auto p-6 space-y-8 flex-1 bg-white"
+                >
+                    {/* PDF-Only Header (Hidden on screen, visible in PDF) */}
+                    <div className="pdf-only-header hidden mb-8 pb-6 border-b-2 border-gray-100 flex items-center justify-between">
+                        <div>
+                            <h1 className="text-3xl font-extrabold text-blue-800 mb-1">Attrinex Churn Report</h1>
+                            <p className="text-gray-500 text-sm">Customer Intelligence Platform</p>
+                        </div>
+                        <div className="text-right">
+                            <h2 className="text-xl font-bold text-gray-900">
+                                {customer.name && !customer.name.startsWith('ROW-') ? customer.name : `ID: ${customer.customer_id}`}
+                            </h2>
+                            <p className="font-bold mt-1" style={{ color: prob > 0.7 ? 'var(--color-risk-high)' : prob > 0.3 ? 'var(--color-risk-medium)' : 'var(--color-risk-low)' }}>
+                                {riskLevel} CHURN RISK
+                            </p>
+                            <p className="text-gray-400 text-xs mt-1">
+                                Generated: {new Date().toLocaleDateString()}
+                            </p>
+                        </div>
+                    </div>
+
+                    <style>{`
+                        /* CSS for PDF Header Toggling */
+                        .pdf-only-header { display: none !important; }
+                        .is-generating-pdf .pdf-only-header { display: flex !important; }
+                        
+                        /* Ensure specific styles for the capture canvas */
+                        .is-generating-pdf {
+                            overflow: visible !important;
+                            height: auto !important;
+                            width: 750px !important; /* Standard printable width */
+                            background: white !important;
+                            margin: 0 !important;
+                            padding: 30px !important;
+                            box-sizing: border-box !important;
+                        }
+
+                        .is-generating-pdf * {
+                            box-sizing: border-box !important;
+                        }
+
+                        /* Stat Cards in PDF - Target specifically within the grid */
+                        .is-generating-pdf .grid-cols-4 .bg-gray-50 {
+                            min-height: 100px !important;
+                            display: flex !important;
+                            flex-direction: column !important;
+                            justify-content: space-between !important;
+                            background-color: #f9fafb !important;
+                            border: 1px solid #f3f4f6 !important;
+                            padding: 12px !important;
+                        }
+
+                        /* Fix for Customer Profile Box in PDF */
+                        .is-generating-pdf .profile-box {
+                            height: auto !important;
+                            max-height: none !important;
+                            overflow: visible !important;
+                            background-color: #f9fafb !important;
+                            border: 1px solid #f3f4f6 !important;
+                        }
+
+                        /* Fix for Main Content Grid in PDF */
+                        .is-generating-pdf .lg\\:grid-cols-2 {
+                            display: grid !important;
+                            grid-template-columns: 1fr 1fr !important;
+                            gap: 20px !important;
+                        }
+
+                        /* Ensure text doesn't wrap awkwardly */
+                        .is-generating-pdf .truncate {
+                            white-space: normal !important;
+                            overflow: visible !important;
+                        }
+                    `}</style>
                     {/* ── Stat Cards ── */}
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
 
@@ -269,8 +377,11 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                             <div className="text-2xl font-bold text-gray-900">{probPct}%</div>
                             <div className="w-full bg-gray-200 h-1.5 mt-2 rounded-full overflow-hidden">
                                 <div
-                                    className={`h-full ${prob > 0.5 ? 'bg-red-500' : 'bg-green-500'}`}
-                                    style={{ width: `${prob * 100}%` }}
+                                    className="h-full"
+                                    style={{
+                                        width: `${prob * 100}%`,
+                                        backgroundColor: prob > 0.5 ? 'var(--color-risk-high)' : 'var(--color-risk-low)'
+                                    }}
                                 />
                             </div>
                         </div>
@@ -330,7 +441,7 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                                                 <div key={idx} className="relative">
                                                     <div className="flex justify-between text-sm mb-1">
                                                         <span className="font-medium text-gray-700">{humanise(feature)}</span>
-                                                        <span className={isNegative ? 'text-green-600' : 'text-red-600 font-semibold'}>
+                                                        <span style={{ color: isNegative ? 'var(--color-risk-low)' : 'var(--color-risk-high)', fontWeight: isNegative ? 'normal' : '600' }}>
                                                             {isNegative ? 'Reduces Risk' : 'Increases Risk'}
                                                         </span>
                                                     </div>
@@ -343,12 +454,12 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                                                     <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden flex">
                                                         <div className="w-1/2 flex justify-end">
                                                             {isNegative && (
-                                                                <div className="h-full bg-green-500 rounded-l-full" style={{ width: `${width}%` }} />
+                                                                <div className="h-full rounded-l-full" style={{ width: `${width}%`, backgroundColor: 'var(--color-risk-low)' }} />
                                                             )}
                                                         </div>
                                                         <div className="w-1/2">
                                                             {!isNegative && (
-                                                                <div className="h-full bg-red-500 rounded-r-full" style={{ width: `${width}%` }} />
+                                                                <div className="h-full rounded-r-full" style={{ width: `${width}%`, backgroundColor: 'var(--color-risk-high)' }} />
                                                             )}
                                                         </div>
                                                     </div>
@@ -397,7 +508,7 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                             {/* Full Feature Profile */}
                             <div>
                                 <h3 className="text-lg font-bold text-gray-900 mb-4">Customer Profile</h3>
-                                <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 h-56 overflow-y-auto text-sm">
+                                <div className="profile-box bg-gray-50 rounded-xl p-4 border border-gray-200 h-56 overflow-y-auto text-sm">
                                     {customerFeatures ? (
                                         <table className="w-full">
                                             <tbody>
@@ -447,17 +558,20 @@ export default function CustomerReportModal({ customer, shapData, customerFeatur
                     </div>
                 </div>
 
-                {/* Footer */}
-                <div className="p-4 border-t border-gray-100 bg-gray-50 rounded-b-xl flex justify-end gap-3">
+                {/* Footer (Screen only - Not in PDF) */}
+                <div className="p-4 border-t border-gray-100 bg-gray-50 rounded-b-xl flex justify-end gap-3 shrink-0">
                     <button
                         onClick={onClose}
                         className="px-4 py-2 bg-white border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50"
                     >
                         Close
                     </button>
-                    <button className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2">
-                        <Smartphone className="w-4 h-4" />
-                        Log Action
+                    <button
+                        onClick={handleDownloadPdf}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2"
+                    >
+                        <Download className="w-4 h-4" />
+                        Download PDF
                     </button>
                 </div>
 

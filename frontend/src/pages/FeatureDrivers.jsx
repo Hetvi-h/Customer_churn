@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, TrendingUp, AlertCircle, Info } from 'lucide-react';
 import { useUpload } from '../contexts/UploadContext';
-import { metadataApi } from '../services/api';
+import { useApiData } from '../hooks/useSwrFetcher';
 
 /**
  * Feature Drivers Page
@@ -13,50 +13,29 @@ import { metadataApi } from '../services/api';
 export default function FeatureDrivers() {
     const navigate = useNavigate();
     const { hasUploadedData } = useUpload();
-    const [featureImportance, setFeatureImportance] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
 
-    useEffect(() => {
-        if (!hasUploadedData) {
-            navigate('/upload');
-            return;
+    const { data: metadata, error: metadataErrorObj, isLoading: loading, mutate } = useApiData(
+        hasUploadedData ? '/metadata' : null
+    );
+
+    const error = metadataErrorObj ? metadataErrorObj.info?.detail || metadataErrorObj.message || 'Failed to load feature importance data' : null;
+
+    // Derived State
+    const featureImportance = React.useMemo(() => {
+        if (!metadata || !metadata.feature_importance) return [];
+
+        if (Array.isArray(metadata.feature_importance)) {
+            return metadata.feature_importance;
+        } else if (typeof metadata.feature_importance === 'object') {
+            return Object.entries(metadata.feature_importance)
+                .map(([feature, importance]) => ({ feature, importance }))
+                .sort((a, b) => b.importance - a.importance);
         }
-        fetchFeatureImportance();
-    }, [hasUploadedData, navigate]);
-
-    const fetchFeatureImportance = async () => {
-        setLoading(true);
-        setError(null);
-
-        try {
-            const response = await metadataApi.getMetadata();
-            const metadata = response.data;
-
-            // Extract feature importance from metadata
-            let features = [];
-
-            if (metadata.feature_importance) {
-                if (Array.isArray(metadata.feature_importance)) {
-                    features = metadata.feature_importance;
-                } else if (typeof metadata.feature_importance === 'object') {
-                    features = Object.entries(metadata.feature_importance)
-                        .map(([feature, importance]) => ({ feature, importance }))
-                        .sort((a, b) => b.importance - a.importance);
-                }
-            }
-
-            setFeatureImportance(features);
-        } catch (err) {
-            console.error('Error fetching feature importance:', err);
-            setError('Failed to load feature importance data');
-        } finally {
-            setLoading(false);
-        }
-    };
+        return [];
+    }, [metadata]);
 
     if (!hasUploadedData) {
-        return null;
+        return null; // or navigate('/upload')
     }
 
     return (
@@ -98,7 +77,7 @@ export default function FeatureDrivers() {
             {/* Error State */}
             {error && !loading && (
                 <div className="bg-white rounded-lg shadow-md p-12 text-center">
-                    <AlertCircle className="w-12 h-12 text-red-600 mx-auto mb-4" />
+                    <AlertCircle className="w-12 h-12 text-[var(--color-risk-high)] mx-auto mb-4" />
                     <p className="text-gray-600">{error}</p>
                     <button
                         onClick={fetchFeatureImportance}
@@ -124,7 +103,7 @@ export default function FeatureDrivers() {
 
                             // Color gradient based on rank
                             const getBarColor = (index) => {
-                                if (index === 0) return 'from-red-600 to-red-500';
+                                if (index === 0) return 'from-[var(--color-risk-high)] to-red-500';
                                 if (index < 3) return 'from-orange-600 to-orange-500';
                                 if (index < 5) return 'from-yellow-600 to-yellow-500';
                                 if (index < 10) return 'from-blue-600 to-blue-500';

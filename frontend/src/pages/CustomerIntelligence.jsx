@@ -15,8 +15,10 @@ import {
     CheckCircle
 } from 'lucide-react';
 import { useUpload } from '../contexts/UploadContext';
-import { customersApi, predictionsApi, metadataApi } from '../services/api';
+import { predictionsApi } from '../services/api';
 import CustomerReportModal from '../components/CustomerReportModal';
+import { SkeletonRow, HelpTooltip, InlineError } from '../components/Common';
+import { useApiData } from '../hooks/useSwrFetcher';
 
 /**
  * Customer Intelligence - Merged Customers + Predictions Page
@@ -26,7 +28,7 @@ import CustomerReportModal from '../components/CustomerReportModal';
  */
 export default function CustomerIntelligence() {
     const navigate = useNavigate();
-    const { hasUploadedData, uploadMetadata } = useUpload();
+    const { hasUploadedData } = useUpload();
 
     // Redirect if no data uploaded
     useEffect(() => {
@@ -38,117 +40,80 @@ export default function CustomerIntelligence() {
     // Tab state
     const [activeTab, setActiveTab] = useState('lookup'); // 'lookup' or 'predictor'
 
-    // Tab 1: Customer Lookup state
-    const [customers, setCustomers] = useState([]);
-    const [filteredCustomers, setFilteredCustomers] = useState([]);
+    // Filtering State
     const [searchQuery, setSearchQuery] = useState('');
     const [riskFilter, setRiskFilter] = useState('all'); // 'all', 'high', 'medium', 'low'
+    const [currentPage, setCurrentPage] = useState(1);
+    const PAGE_SIZE = 50;
+
+    // View State
     const [selectedCustomer, setSelectedCustomer] = useState(null);
     const [customerShap, setCustomerShap] = useState(null);
     const [customerFeatures, setCustomerFeatures] = useState(null);
-    const [loadingCustomers, setLoadingCustomers] = useState(true);
     const [loadingShap, setLoadingShap] = useState(false);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [totalCustomers, setTotalCustomers] = useState(0);
-    const PAGE_SIZE = 50;
 
-    // Tab 2: Churn Predictor state
-    const [metadata, setMetadata] = useState(null);
+    // Predictor State
     const [formData, setFormData] = useState({});
     const [predictionResult, setPredictionResult] = useState(null);
     const [predicting, setPredicting] = useState(false);
-    const [loadingMetadata, setLoadingMetadata] = useState(true);
+    const [predictError, setPredictError] = useState(null);
 
-    // Load customers for Tab 1
-    useEffect(() => {
-        if (activeTab === 'lookup') {
-            fetchCustomers();
-        }
-    }, [activeTab]);
+    // --- SWR Data Fetching ---
 
-    // Load metadata for Tab 2
-    useEffect(() => {
-        if (activeTab === 'predictor') {
-            fetchMetadata();
-        }
-    }, [activeTab]);
+    // 1. Fetch Customers (only active when on lookup tab)
+    const {
+        data: customersRes,
+        isLoading: loadingCustomers,
+        error: customersError
+    } = useApiData(
+        activeTab === 'lookup'
+            ? `/customers?page=${currentPage}&page_size=${PAGE_SIZE}&sort_by=churn_probability&sort_order=desc${searchQuery ? `&search=${searchQuery}` : ''}${riskFilter !== 'all' ? `&risk_level=${riskFilter}` : ''}`
+            : null
+    );
+
+    const customers = customersRes?.customers || customersRes || [];
+    const totalCustomers = customersRes?.total ?? customers.length;
+
+    // The backend API should handle filtering natively with the `risk_level` and `search` params
+    // via SWR. But just to be safe and match the previous UI state logic:
+    const filteredCustomers = customers;
+
+    // 2. Fetch Metadata (only active when on predictor tab)
+    const {
+        data: metadata,
+        isLoading: loadingMetadata,
+        error: metadataError
+    } = useApiData(
+        activeTab === 'predictor' ? '/metadata' : null
+    );
 
     // Reset to page 1 whenever search or filter changes
     useEffect(() => {
         setCurrentPage(1);
     }, [searchQuery, riskFilter]);
 
-    // Load customers when search, filter, or page changes (Server-side filtering)
+    // Initialize Predictor Form when Metadata Loads
     useEffect(() => {
-        if (activeTab === 'lookup') {
-            const timer = setTimeout(() => {
-                fetchCustomers();
-            }, 300); // 300ms debounce for search
-            return () => clearTimeout(timer);
-        }
-    }, [activeTab, searchQuery, riskFilter, currentPage]);
-
-    // Derived state for filtered customers is no longer needed if we trust server
-    // But we might want to keep it if we do client-side sorting on the page
-
-    const fetchCustomers = async () => {
-        setLoadingCustomers(true);
-        try {
-            const params = {
-                page: currentPage,
-                page_size: PAGE_SIZE,
-                search: searchQuery || undefined,
-                risk_level: riskFilter === 'all' ? undefined : riskFilter,
-                sort_by: 'churn_probability',
-                sort_order: 'desc'
-            };
-
-            const response = await customersApi.getCustomers(params);
-
-            // Handle response structure { customers: [], total: ... }
-            const data = response.data.customers || response.data || [];
-            const total = response.data.total ?? data.length;
-
-            setCustomers(data);
-            setFilteredCustomers(data);
-            setTotalCustomers(total);
-        } catch (error) {
-            console.error('Error fetching customers:', error);
-            setCustomers([]);
-            setFilteredCustomers([]);
-            setTotalCustomers(0);
-        } finally {
-            setLoadingCustomers(false);
-        }
-    };
-
-    const fetchMetadata = async () => {
-        setLoadingMetadata(true);
-        try {
-            const response = await metadataApi.getMetadata();
-            const meta = response.data;
-            setMetadata(meta);
-
-            // Initialize form with empty values
-            const initialForm = {};
-            if (meta.numerical_cols) {
-                meta.numerical_cols.forEach(col => {
-                    initialForm[col] = 0;
-                });
+        if (metadata && Object.keys(formData).length === 0) {
+            try {
+                const initialForm = {};
+                if (metadata.numerical_cols) {
+                    metadata.numerical_cols.forEach(col => {
+                        initialForm[col] = 0;
+                    });
+                }
+                if (metadata.categorical_cols) {
+                    metadata.categorical_cols.forEach(col => {
+                        const values = metadata.categorical_values?.[col] || [];
+                        initialForm[col] = values[0] || '';
+                    });
+                }
+                setFormData(initialForm);
+            } catch (error) {
+                console.error('Error initializing form data:', error);
             }
-            if (meta.categorical_cols) {
-                meta.categorical_cols.forEach(col => {
-                    const values = meta.categorical_values?.[col] || [];
-                    initialForm[col] = values[0] || '';
-                });
-            }
-            setFormData(initialForm);
-        } catch (error) {
-            console.error('Error fetching metadata:', error);
-        } finally {
-            setLoadingMetadata(false);
         }
-    };
+    }, [metadata, formData]);
 
     const handleCustomerClick = async (customer) => {
         setSelectedCustomer(customer);
@@ -187,13 +152,15 @@ export default function CustomerIntelligence() {
     const handlePredictChurn = async () => {
         setPredicting(true);
         setPredictionResult(null);
+        setPredictError(null);
 
         try {
             const response = await predictionsApi.predictWithExplanation(formData);
             setPredictionResult(response.data);
         } catch (error) {
             console.error('Error predicting churn:', error);
-            alert('Prediction failed: ' + (error.response?.data?.detail || error.message));
+            const detail = error?.response?.data?.detail;
+            setPredictError(detail || 'Prediction failed. Please check your inputs and try again.');
         } finally {
             setPredicting(false);
         }
@@ -337,28 +304,22 @@ export default function CustomerIntelligence() {
                                 </button>
                                 <button
                                     onClick={() => setRiskFilter('high')}
-                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'high'
-                                        ? 'bg-red-600 text-white'
-                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
+                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'all' || riskFilter === 'high' ? '' : 'opacity-50'}`}
+                                    style={riskFilter === 'high' ? { backgroundColor: 'var(--color-risk-high)', color: 'white' } : { backgroundColor: '#f3f4f6', color: '#374151' }}
                                 >
                                     🔴 High Risk
                                 </button>
                                 <button
                                     onClick={() => setRiskFilter('medium')}
-                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'medium'
-                                        ? 'bg-yellow-600 text-white'
-                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
+                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'all' || riskFilter === 'medium' ? '' : 'opacity-50'}`}
+                                    style={riskFilter === 'medium' ? { backgroundColor: 'var(--color-risk-medium)', color: 'white' } : { backgroundColor: '#f3f4f6', color: '#374151' }}
                                 >
                                     🟡 Medium Risk
                                 </button>
                                 <button
                                     onClick={() => setRiskFilter('low')}
-                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'low'
-                                        ? 'bg-green-600 text-white'
-                                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                        }`}
+                                    className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-1 ${riskFilter === 'all' || riskFilter === 'low' ? '' : 'opacity-50'}`}
+                                    style={riskFilter === 'low' ? { backgroundColor: 'var(--color-risk-low)', color: 'white' } : { backgroundColor: '#f3f4f6', color: '#374151' }}
                                 >
                                     🟢 Low Risk
                                 </button>
@@ -376,10 +337,14 @@ export default function CustomerIntelligence() {
                                             Customer ID
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Churn Probability
+                                            <span className="flex items-center gap-1">Churn Probability
+                                                <HelpTooltip text="Likelihood (0-100%) this customer will stop using your service. Above 70% = High Risk." position="top" />
+                                            </span>
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Risk Level
+                                            <span className="flex items-center gap-1">Risk Level
+                                                <HelpTooltip text="High (>70%), Medium (30-70%), Low (<30%) based on churn probability." position="top" />
+                                            </span>
                                         </th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                             Top Risk Driver
@@ -391,16 +356,17 @@ export default function CustomerIntelligence() {
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {loadingCustomers ? (
-                                        <tr>
-                                            <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
-                                                <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                                                Loading customers...
-                                            </td>
-                                        </tr>
+                                        Array.from({ length: 5 }).map((_, i) => (
+                                            <SkeletonRow key={i} cols={5} />
+                                        ))
                                     ) : filteredCustomers.length === 0 ? (
                                         <tr>
-                                            <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
-                                                No customers found
+                                            <td colSpan="5" className="px-6 py-16 text-center">
+                                                <div className="flex flex-col items-center gap-3 text-gray-400">
+                                                    <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                                    <p className="font-medium text-gray-600">No customers found</p>
+                                                    <p className="text-sm">Try adjusting your search or risk filter</p>
+                                                </div>
                                             </td>
                                         </tr>
                                     ) : (
@@ -417,13 +383,15 @@ export default function CustomerIntelligence() {
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex-1 bg-gray-200 rounded-full h-2 max-w-[100px]">
                                                             <div
-                                                                className={`h-2 rounded-full ${(customer.churn_probability || 0) > 0.7
-                                                                    ? 'bg-red-600'
-                                                                    : (customer.churn_probability || 0) > 0.4
-                                                                        ? 'bg-yellow-600'
-                                                                        : 'bg-green-600'
-                                                                    }`}
-                                                                style={{ width: `${(customer.churn_probability || 0) * 100}%` }}
+                                                                className="h-2 rounded-full"
+                                                                style={{
+                                                                    width: `${(customer.churn_probability || 0) * 100}%`,
+                                                                    backgroundColor: (customer.churn_probability || 0) > 0.7
+                                                                        ? 'var(--color-risk-high)'
+                                                                        : (customer.churn_probability || 0) > 0.4
+                                                                            ? 'var(--color-risk-medium)'
+                                                                            : 'var(--color-risk-low)'
+                                                                }}
                                                             />
                                                         </div>
                                                         <span className="text-sm font-medium text-gray-900">
@@ -660,6 +628,16 @@ export default function CustomerIntelligence() {
                                     })}
                                 </div>
 
+                                {predictError && (
+                                    <div className="mt-4">
+                                        <InlineError
+                                            message={predictError}
+                                            onDismiss={() => setPredictError(null)}
+                                            onRetry={handlePredictChurn}
+                                        />
+                                    </div>
+                                )}
+
                                 <button
                                     onClick={handlePredictChurn}
                                     disabled={predicting}
@@ -715,10 +693,10 @@ export default function CustomerIntelligence() {
                                     const probPct = (prob * 100).toFixed(1);
                                     const riskLevel = predictionResult.risk_level?.toUpperCase() || 'UNKNOWN';
                                     const riskColorClass = prob > 0.7
-                                        ? 'text-red-600 bg-red-50 border-red-200'
+                                        ? 'text-[var(--color-risk-high)] bg-red-50 border-red-200'
                                         : prob > 0.3
-                                            ? 'text-yellow-600 bg-yellow-50 border-yellow-200'
-                                            : 'text-green-600 bg-green-50 border-green-200';
+                                            ? 'text-[var(--color-risk-medium)] bg-yellow-50 border-yellow-200'
+                                            : 'text-[var(--color-risk-low)] bg-green-50 border-green-200';
 
                                     // shap_values from /explain is already a dict: {feature: float}
                                     // Handle both dict and array formats defensively
@@ -798,7 +776,7 @@ export default function CustomerIntelligence() {
                                                                     <div key={idx}>
                                                                         <div className="flex justify-between text-sm mb-1">
                                                                             <span className="font-medium text-gray-700">{humanise(feature)}</span>
-                                                                            <span className={isNeg ? 'text-green-600' : 'text-red-600 font-semibold'}>
+                                                                            <span style={{ color: isNeg ? 'var(--color-risk-low)' : 'var(--color-risk-high)', fontWeight: isNeg ? 'normal' : '600' }}>
                                                                                 {isNeg ? '↓ Reduces Risk' : '↑ Increases Risk'}
                                                                             </span>
                                                                         </div>
@@ -807,10 +785,10 @@ export default function CustomerIntelligence() {
                                                                         )}
                                                                         <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden flex">
                                                                             <div className="w-1/2 flex justify-end">
-                                                                                {isNeg && <div className="h-full bg-green-500 rounded-l-full" style={{ width: `${width}%` }} />}
+                                                                                {isNeg && <div className="h-full rounded-l-full" style={{ width: `${width}%`, backgroundColor: 'var(--color-risk-low)' }} />}
                                                                             </div>
                                                                             <div className="w-1/2">
-                                                                                {!isNeg && <div className="h-full bg-red-500 rounded-r-full" style={{ width: `${width}%` }} />}
+                                                                                {!isNeg && <div className="h-full rounded-r-full" style={{ width: `${width}%`, backgroundColor: 'var(--color-risk-high)' }} />}
                                                                             </div>
                                                                         </div>
                                                                     </div>

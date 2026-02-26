@@ -11,7 +11,7 @@ import {
   Cell
 } from 'recharts';
 import { modelApi } from '../services/api';
-import { LoadingPage, ErrorMessage, Alert } from '../components/Common';
+import { LoadingPage, ErrorMessage, Alert, HelpTooltip } from '../components/Common';
 
 export default function ModelMetrics() {
   const [metrics, setMetrics] = useState(null);
@@ -154,25 +154,33 @@ export default function ModelMetrics() {
           <h3 className="text-lg font-semibold mb-4">Performance Metrics</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-blue-700 mb-1">ROC-AUC</p>
+              <p className="text-sm text-blue-700 mb-1 flex items-center justify-center">ROC-AUC
+                <HelpTooltip text="Area Under ROC Curve. 0.5 = random guess, 1.0 = perfect. Above 0.75 is strong for churn prediction." position="top" />
+              </p>
               <p className="text-3xl font-bold text-blue-600">
                 {((perf.roc_auc || 0) * 100).toFixed(1)}%
               </p>
             </div>
             <div className="text-center p-4 bg-green-50 rounded-lg">
-              <p className="text-sm text-green-700 mb-1">Accuracy</p>
+              <p className="text-sm text-green-700 mb-1 flex items-center justify-center">Accuracy
+                <HelpTooltip text="% of predictions that were correct overall. Can be misleading if data is imbalanced — ROC-AUC is more reliable." position="top" />
+              </p>
               <p className="text-3xl font-bold text-green-600">
                 {((perf.accuracy || 0) * 100).toFixed(1)}%
               </p>
             </div>
             <div className="text-center p-4 bg-purple-50 rounded-lg">
-              <p className="text-sm text-purple-700 mb-1">Precision</p>
+              <p className="text-sm text-purple-700 mb-1 flex items-center justify-center">Precision
+                <HelpTooltip text="Of the customers predicted as churners, what % actually churned? High precision = fewer false alarms." position="top" />
+              </p>
               <p className="text-3xl font-bold text-purple-600">
                 {((perf.precision || 0) * 100).toFixed(1)}%
               </p>
             </div>
             <div className="text-center p-4 bg-orange-50 rounded-lg">
-              <p className="text-sm text-orange-700 mb-1">Recall</p>
+              <p className="text-sm text-orange-700 mb-1 flex items-center justify-center">Recall
+                <HelpTooltip text="Of actual churners in the data, what % did the model catch? High recall = fewer missed churners." position="top" />
+              </p>
               <p className="text-3xl font-bold text-orange-600">
                 {((perf.recall || 0) * 100).toFixed(1)}%
               </p>

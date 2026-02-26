@@ -313,13 +313,46 @@ class ChurnPredictor:
             }
 
     def _get_risk_level(self, probability: float) -> str:
-        """Determine risk level based on probability"""
+        """Determine risk level based on probability (used for single predictions)"""
         if probability >= RISK_THRESHOLDS["high"]:
             return "high"
         elif probability >= RISK_THRESHOLDS["medium"]:
             return "medium"
         else:
             return "low"
+
+    def batch_assign_risk_levels(self, probabilities: np.ndarray) -> list:
+        """
+        Assign risk levels using PERCENTILE-BASED segmentation.
+
+        Enterprise approach: instead of fixed thresholds (e.g. >0.7 = high),
+        we bucket based on the distribution of THIS dataset:
+          - Top 10% of churn probability scores  → High Risk
+          - Next 20% (70th–90th percentile)      → Medium Risk
+          - Bottom 70%                            → Low Risk
+
+        Benefits:
+          - Always produces a meaningful spread regardless of dataset scale
+          - Adapts to different industries (banking vs telecom vs retail)
+          - Action-capacity aware: ~10% of customers always flagged for intervention
+        """
+        if len(probabilities) == 0:
+            return []
+
+        high_cutoff   = np.percentile(probabilities, 90)  # top 10%
+        medium_cutoff = np.percentile(probabilities, 70)  # top 10–30%
+
+        levels = []
+        for p in probabilities:
+            if p >= high_cutoff:
+                levels.append("high")
+            elif p >= medium_cutoff:
+                levels.append("medium")
+            else:
+                levels.append("low")
+
+        return levels
+
 
     def _calculate_confidence_interval(self, probability: float, confidence: float = 0.95) -> Dict[str, float]:
         """Calculate confidence interval for prediction"""

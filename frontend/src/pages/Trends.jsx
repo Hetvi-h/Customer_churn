@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Calendar, TrendingUp, TrendingDown, Minus, Activity, BarChart3, Clock } from 'lucide-react';
 import {
   LineChart,
@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
   Legend
 } from 'recharts';
-import { trendsApi } from '../services/api';
+import { useApiData } from '../hooks/useSwrFetcher';
 import { LoadingPage, ErrorMessage, Alert } from '../components/Common';
 
 const PERIODS = [
@@ -26,33 +26,19 @@ const PERIODS = [
 
 export default function Trends() {
   const [period, setPeriod] = useState('30d');
-  const [churnTrends, setChurnTrends] = useState(null);
-  const [riskEvolution, setRiskEvolution] = useState(null);
-  const [cohortAnalysis, setCohortAnalysis] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    fetchTrends();
-  }, [period]);
+  const { data: churnTrends, error: churnError, isLoading: loadingChurn, mutate: mutateChurn } = useApiData(`/trends/churn?period=${period}`);
+  const { data: riskEvolution, error: riskError, isLoading: loadingRisk, mutate: mutateRisk } = useApiData(`/trends/risk-evolution?period=${period}`);
+  const { data: cohortAnalysis, error: cohortError, isLoading: loadingCohort, mutate: mutateCohort } = useApiData(`/trends/cohort-analysis`);
 
-  const fetchTrends = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [churnRes, riskRes, cohortRes] = await Promise.all([
-        trendsApi.getChurnTrends(period),
-        trendsApi.getRiskEvolution(period),
-        trendsApi.getCohortAnalysis(),
-      ]);
-      setChurnTrends(churnRes.data);
-      setRiskEvolution(riskRes.data);
-      setCohortAnalysis(cohortRes.data);
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load trends');
-    } finally {
-      setLoading(false);
-    }
+  const loading = loadingChurn || loadingRisk || loadingCohort;
+  const errorObj = churnError || riskError || cohortError;
+  const error = errorObj ? errorObj.info?.detail || errorObj.message || 'Failed to load trends' : null;
+
+  const fetchTrends = () => {
+    mutateChurn();
+    mutateRisk();
+    mutateCohort();
   };
 
   if (loading) return <LoadingPage />;
@@ -141,7 +127,12 @@ export default function Trends() {
 
   const trendDirection = churnTrends?.summary?.trend_direction;
   const TrendIcon = trendDirection === 'increasing' ? TrendingUp : trendDirection === 'decreasing' ? TrendingDown : Minus;
-  const trendColor = trendDirection === 'increasing' ? 'text-red-600' : trendDirection === 'decreasing' ? 'text-green-600' : 'text-gray-600';
+
+  const getTrendColor = () => {
+    if (trendDirection === 'increasing') return 'var(--color-risk-high)';
+    if (trendDirection === 'decreasing') return 'var(--color-risk-low)';
+    return 'var(--color-text-gray)';
+  };
 
   return (
     <div className="space-y-6">
@@ -172,7 +163,7 @@ export default function Trends() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-lg shadow-md p-4">
             <p className="text-sm text-gray-500">Trend Direction</p>
-            <div className={`flex items-center mt-1 ${trendColor}`}>
+            <div className="flex items-center mt-1" style={{ color: getTrendColor() }}>
               <TrendIcon className="w-5 h-5 mr-2" />
               <span className="text-lg font-semibold capitalize">
                 {churnTrends.summary.trend_direction || 'Stable'}
@@ -181,18 +172,16 @@ export default function Trends() {
           </div>
           <div className="bg-white rounded-lg shadow-md p-4">
             <p className="text-sm text-gray-500">Churn Rate Change</p>
-            <p className={`text-lg font-semibold ${
-              churnTrends.summary.churn_rate_change > 0 ? 'text-red-600' : 'text-green-600'
-            }`}>
+            <p className={`text-lg font-semibold ${churnTrends.summary.churn_rate_change > 0 ? 'text-red-600' : 'text-green-600'
+              }`}>
               {churnTrends.summary.churn_rate_change > 0 ? '+' : ''}
               {churnTrends.summary.churn_rate_change?.toFixed(2) || 0}%
             </p>
           </div>
           <div className="bg-white rounded-lg shadow-md p-4">
             <p className="text-sm text-gray-500">At-Risk Change</p>
-            <p className={`text-lg font-semibold ${
-              churnTrends.summary.at_risk_change > 0 ? 'text-red-600' : 'text-green-600'
-            }`}>
+            <p className={`text-lg font-semibold ${churnTrends.summary.at_risk_change > 0 ? 'text-red-600' : 'text-green-600'
+              }`}>
               {churnTrends.summary.at_risk_change > 0 ? '+' : ''}
               {churnTrends.summary.at_risk_change || 0} customers
             </p>
@@ -387,13 +376,14 @@ export default function Trends() {
                       </td>
                       <td className="px-4 py-2 text-sm">
                         <span
-                          className={`font-medium ${
-                            cohort.churn_rate > 20
-                              ? 'text-red-600'
+                          className="font-medium"
+                          style={{
+                            color: cohort.churn_rate > 20
+                              ? 'var(--color-risk-high)'
                               : cohort.churn_rate > 10
-                              ? 'text-yellow-600'
-                              : 'text-green-600'
-                          }`}
+                                ? 'var(--color-risk-medium)'
+                                : 'var(--color-risk-low)'
+                          }}
                         >
                           {cohort.churn_rate?.toFixed(1)}%
                         </span>
